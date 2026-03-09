@@ -1,0 +1,39 @@
+<?php
+session_start();
+require_once '../../config.php';
+
+// Check Admin Access
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
+    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+    exit();
+}
+
+$id = $_POST['id'] ?? '';
+$targetStatus = $_POST['status'] ?? ''; // This receives the NEW desired status
+
+if (!$id || !$targetStatus) {
+    echo json_encode(['success' => false, 'message' => 'Invalid input']);
+    exit();
+}
+
+// Ensure status is valid
+$validStatuses = ['active', 'inactive'];
+if (!in_array($targetStatus, $validStatuses)) {
+    echo json_encode(['success' => false, 'message' => 'Invalid status value']);
+    exit();
+}
+
+try {
+    $firestore->database()
+        ->collection('Students')
+        ->document($id)
+        ->update([
+            ['path' => 'status', 'value' => $targetStatus],
+            ['path' => 'updated_at', 'value' => date('Y-m-d H:i:s')]
+        ]);
+
+    echo json_encode(['success' => true, 'new_status' => $targetStatus]);
+} catch (Exception $e) {
+    echo json_encode(['success' => false, 'message' => 'Database error']);
+}
+?>
