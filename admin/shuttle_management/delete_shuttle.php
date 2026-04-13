@@ -11,17 +11,20 @@ $id = $_GET['id'] ?? '';
 
 if ($id) {
     try {
+        // CASCADING SAFETY: Deactivating means the bus is permanently off the road.
         $firestore->database()
             ->collection('Shuttles')
             ->document($id)
             ->update([
-                ['path' => 'status', 'value' => 'inactive']
+                ['path' => 'status', 'value' => 'inactive'],
+                ['path' => 'is_online', 'value' => false],
+                ['path' => 'job_status', 'value' => 'Idle'],
+                ['path' => 'updated_at', 'value' => date('Y-m-d H:i:s')]
             ]);
-        
+
         header('Location: shuttles_management.php?msg=inactive');
         exit();
     } catch (Exception $e) {
-        // Optional: handle error via query param
         header('Location: shuttles_management.php?err=failed');
         exit();
     }
@@ -29,4 +32,3 @@ if ($id) {
     header('Location: shuttles_management.php');
     exit();
 }
-?>

@@ -36,12 +36,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = "Capacity must be between 5 and 30.";
     } else {
         try {
-            $shuttleRef->update([
+            // Base updates
+            $updates = [
                 ['path' => 'zone_id', 'value' => $zoneId],
                 ['path' => 'capacity', 'value' => $capacity],
                 ['path' => 'status', 'value' => $status],
                 ['path' => 'updated_at', 'value' => date('Y-m-d H:i:s')]
-            ]);
+            ];
+
+            // CASCADING SAFETY: If we edit the bus to be anything other than active, force it offline
+            if ($status !== 'active') {
+                $updates[] = ['path' => 'is_online', 'value' => false];
+                $updates[] = ['path' => 'job_status', 'value' => 'Idle'];
+            }
+
+            $shuttleRef->update($updates);
             header('Location: shuttles_management.php?msg=updated');
             exit();
         } catch (Exception $e) {
@@ -96,14 +105,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div style="margin-bottom:15px;">
                         <label style="font-weight:600;">Capacity (Seats)</label>
                         <input type="number" name="capacity" class="form-control" 
-                               value="<?= htmlspecialchars($shuttle['capacity']) ?>" min="5" max="30" required>
+                               value="<?= htmlspecialchars($shuttle['capacity'] ?? 13) ?>" min="5" max="30" required>
                     </div>
 
                     <div style="margin-bottom:25px;">
-                        <label style="font-weight:600;">Status</label>
+                        <label style="font-weight:600;">Hardware Status</label>
                         <select name="status" class="form-control" required>
-                            <option value="active" <?= $shuttle['status'] === 'active' ? 'selected' : '' ?>>Active</option>
-                            <option value="inactive" <?= $shuttle['status'] === 'inactive' ? 'selected' : '' ?>>Inactive</option>
+                            <option value="active" <?= ($shuttle['status'] ?? '') === 'active' ? 'selected' : '' ?>>Active (Healthy)</option>
+                            <option value="maintenance" <?= ($shuttle['status'] ?? '') === 'maintenance' ? 'selected' : '' ?>>Maintenance</option>
+                            <option value="inactive" <?= ($shuttle['status'] ?? '') === 'inactive' ? 'selected' : '' ?>>Inactive (Retired)</option>
                         </select>
                     </div>
 

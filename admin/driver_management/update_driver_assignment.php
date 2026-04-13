@@ -21,13 +21,26 @@ if (!$driverId) {
 }
 
 // 4. Prepare the value (Convert empty string to NULL)
-// This ensures "None" is saved as null, not an empty text
 $finalValue = ($shuttleId === '' || $shuttleId === 'null') ? null : $shuttleId;
 
 try {
+    // 5. Pre-flight Check: Is this shuttle already taken?
+    if ($finalValue !== null) {
+        $existingStaffs = $firestore->database()->collection('Staffs')
+            ->where('assigned_shuttle_id', '=', $finalValue)
+            ->documents();
+            
+        foreach ($existingStaffs as $s) {
+            if ($s->id() !== $driverId) {
+                echo json_encode(['success' => false, 'message' => "Shuttle {$finalValue} is already assigned to driver {$s['full_name']}! Unassign them first."]);
+                exit();
+            }
+        }
+    }
+
     $ref = $firestore->database()->collection('Staffs')->document($driverId);
 
-    // 5. Update the Database
+    // 6. Update the Database
     $ref->update([
         ['path' => 'assigned_shuttle_id', 'value' => $finalValue],
         ['path' => 'updated_at', 'value' => date('Y-m-d H:i:s')]
@@ -38,4 +51,3 @@ try {
 } catch (Exception $e) {
     echo json_encode(['success' => false, 'message' => 'Database Error: ' . $e->getMessage()]);
 }
-?>

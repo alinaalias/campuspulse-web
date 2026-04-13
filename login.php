@@ -27,10 +27,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Set Session Data
             $_SESSION['user_id'] = $doc->id();
-            $_SESSION['role'] = $user['role']; 
+            $_SESSION['role'] = $user['role'];
 
-            $_SESSION['full_name'] = $user['full_name'] ?? 'Admin'; 
-            $_SESSION['user_photo'] = $user['photo_url'] ?? '';
+            $_SESSION['full_name'] = $user['full_name'] ?? 'Admin';
+            $_SESSION['profile_pic'] = $user['profile_pic'] ?? '';
 
             // Redirect based on role
             if ($user['role'] === 'admin') {
@@ -49,6 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -57,6 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="css/style.css">
 </head>
+
 <body class="login-body">
 
     <div class="login-card">
@@ -74,13 +76,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <form method="POST" action="login.php">
             <div class="form-group">
                 <label for="email">Email Address</label>
-                <input type="email" name="email" id="email" class="form-control" placeholder="staff@campuspulse.my" required>
+                <input type="email" name="email" id="email" class="form-control" placeholder="staff@campuspulse.my"
+                    required>
             </div>
 
             <div class="form-group">
                 <label for="password">Password</label>
                 <div style="position:relative;">
-                    <input type="password" name="password" id="password" class="form-control" placeholder="••••••••" required>
+                    <input type="password" name="password" id="password" class="form-control" placeholder="••••••••"
+                        required>
                 </div>
             </div>
 
@@ -95,4 +99,5 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 
 </body>
+
 </html>

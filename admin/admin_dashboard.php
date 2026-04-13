@@ -1,4 +1,5 @@
 <?php
+require_once '../config.php';
 session_start();
 // 1. Security Check
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {

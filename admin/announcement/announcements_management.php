@@ -8,53 +8,113 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
     exit();
 }
 
-// ==========================================
-// 1. AUTO-PUBLISH LOGIC (The Fix)
-// ==========================================
-// Check for any announcements that are 'pending' but their schedule_time has passed
 $now = date('Y-m-d H:i:s');
-$pendingQuery = $firestore->database()->collection('Announcements')
-    ->where('status', '=', 'pending')
-    ->where('schedule_time', '<=', $now)
-    ->documents();
+$db = $firestore->database();
 
-if (!$pendingQuery->isEmpty()) {
-    $batch = $firestore->database()->batch();
-    $updatesCount = 0;
+// ==========================================
+// 1. HANDLE NEW ANNOUNCEMENT SUBMISSION 
+// ==========================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'publish') {
+    $title = trim($_POST['title']);
+    $message = trim($_POST['message']);
+    $tag = $_POST['tag']; 
+    $target_audience = $_POST['target_audience'] ?? 'all'; // NEW: Target Audience Restored
+    $lifespan = (int)$_POST['lifespan']; 
+    $schedule_time = !empty($_POST['schedule_time']) ? $_POST['schedule_time'] : null;
+    
+    $status = ($schedule_time && strtotime($schedule_time) > strtotime($now)) ? 'scheduled' : 'active';
 
-    foreach ($pendingQuery as $doc) {
-        // Ensure schedule_time is actually set and valid before updating
-        $data = $doc->data();
-        if (!empty($data['schedule_time'])) {
-            $batch->update($doc->reference(), [
-                ['path' => 'status', 'value' => 'sent']
-            ]);
-            $updatesCount++;
+    $expires_at = null;
+    if ($lifespan > 0) {
+        $baseTime = $schedule_time ? strtotime($schedule_time) : strtotime($now);
+        $expires_at = date('Y-m-d H:i:s', strtotime("+$lifespan hours", $baseTime));
+    }
+
+    $db->collection('Announcements')->add([
+        'title' => $title,
+        'message' => $message,
+        'tag' => $tag,
+        'target_audience' => $target_audience, // Save the audience
+        'author_id' => $_SESSION['user_id'],
+        'created_at' => $now,
+        'schedule_time' => $schedule_time,
+        'expires_at' => $expires_at,
+        'status' => $status
+    ]);
+    
+    if ($status === 'active') { 
+        try {
+            // Because you initialized $messaging in config.php, you can use it directly!
+            // We use the "all" topic for general broadcasts
+            $topic = ($target_audience === 'all') ? 'all' : $target_audience;
+
+            // Craft the Push Notification using Kreait syntax
+            $notification = \Kreait\Firebase\Messaging\Notification::create($title, $message);
+            
+            $cloudMessage = \Kreait\Firebase\Messaging\CloudMessage::withTarget('topic', $topic)
+                ->withNotification($notification);
+
+            // Pull the trigger!
+            $messaging->send($cloudMessage);
+
+        } catch (Exception $e) {
+            // Log error silently so it doesn't crash the admin's screen if FCM fails
+            error_log('FCM Broadcast Failed: ' . $e->getMessage());
         }
     }
-
-    // Commit batch update if there were changes
-    if ($updatesCount > 0) {
-        $batch->commit();
-    }
-}
-// ==========================================
-
-// 2. DELETE LOGIC (Handle Deletion Request)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_id'])) {
-    $firestore->database()->collection('Announcements')->document($_POST['delete_id'])->delete();
-    header("Location: announcements_management.php?msg=deleted");
+    
+    header("Location: announcements_management.php?msg=" . ($status === 'scheduled' ? 'scheduled' : 'published'));
     exit();
 }
 
-// 3. FETCH ANNOUNCEMENTS (Sorted Newest First)
-$announcements = [];
-$query = $firestore->database()->collection('Announcements')->orderBy('created_at', 'DESC')->documents();
+// Handle Quick Delete/Revoke (The Kill Switch)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['revoke_id'])) {
+    $db->collection('Announcements')->document($_POST['revoke_id'])->update([
+        ['path' => 'status', 'value' => 'revoked']
+    ]);
+    header("Location: announcements_management.php?msg=revoked");
+    exit();
+}
+
+// ==========================================
+// 2. FETCH & PROCESS LIVE FEED DATA
+// ==========================================
+$activeAnnouncements = [];
+$stats = ['active' => 0, 'scheduled' => 0, 'driver_reports' => 0];
+
+$query = $db->collection('Announcements')->orderBy('created_at', 'DESC')->documents();
+
 foreach ($query as $doc) {
     if ($doc->exists()) {
         $data = $doc->data();
-        $data['id'] = $doc->id(); // Capture ID
-        $announcements[] = $data;
+        $data['id'] = $doc->id();
+        
+        // Auto-Publish Check
+        if ($data['status'] === 'scheduled' && !empty($data['schedule_time']) && strtotime($data['schedule_time']) <= strtotime($now)) {
+            $data['status'] = 'active';
+            $db->collection('Announcements')->document($doc->id())->update([['path' => 'status', 'value' => 'active']]);
+        }
+
+        // Auto-Expire Check
+        if ($data['status'] === 'active' && !empty($data['expires_at']) && strtotime($data['expires_at']) <= strtotime($now)) {
+            $data['status'] = 'expired';
+            $db->collection('Announcements')->document($doc->id())->update([['path' => 'status', 'value' => 'expired']]);
+        }
+
+        // Categorize for the Hub Feed
+        if ($data['status'] === 'active') {
+            $stats['active']++;
+            $activeAnnouncements[] = $data;
+            
+            // Check if this was auto-generated by a driver (has GPS data)
+            if (isset($data['location_lat']) && $data['location_lat'] !== 'N/A') {
+                $stats['driver_reports']++;
+            }
+            
+        } elseif ($data['status'] === 'scheduled') {
+            $stats['scheduled']++;
+            $activeAnnouncements[] = $data; 
+        }
     }
 }
 ?>
@@ -64,126 +124,121 @@ foreach ($query as $doc) {
 <head>
     <meta charset="UTF-8">
     <title>Announcements - CampusPulse</title>
-    <link rel="icon" type="image/x-icon" href="../../img/favicon.ico">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="../../css/style.css">
     <style>
-        .badge { padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; display: inline-flex; align-items: center; gap: 5px; }
+        .stat-card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.02); display: flex; align-items: center; gap: 15px; border-left: 4px solid var(--primary-blue); }
+        .stat-card h3 { margin: 0; font-size: 1.5rem; color: #333; }
+        .stat-card p { margin: 0; font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
         
-        /* Audience Badges */
-        .badge-all     { background: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; }
-        .badge-driver  { background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; }
-        .badge-student { background: #fff3e0; color: #ef6c00; border: 1px solid #ffe0b2; }
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; opacity: 0; visibility: hidden; transition: 0.3s; }
+        .modal-overlay.active { opacity: 1; visibility: visible; }
+        .slide-modal { position: fixed; top: 0; right: -550px; width: 100%; max-width: 500px; height: 100vh; background: white; z-index: 1001; box-shadow: -5px 0 25px rgba(0,0,0,0.1); transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1); padding: 30px; overflow-y: auto; }
+        .slide-modal.active { right: 0; }
+        
+        /* Badges */
+        .feed-tag { font-size: 0.75rem; font-weight: 700; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
+        .tag-emergency { background: #ffebee; color: #c62828; }
+        .tag-warning { background: #fff8e1; color: #f57f17; }
+        .tag-info { background: #e3f2fd; color: #1565c0; }
+        
+        .aud-badge { font-size: 0.7rem; font-weight: 600; padding: 3px 8px; border-radius: 12px; background: #f1f3f5; color: #495057; border: 1px solid #e9ecef; }
+        
+        .template-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+        .template-btn { background: #f8f9fa; border: 1px solid #ddd; padding: 10px; border-radius: 6px; text-align: left; cursor: pointer; transition: 0.2s; font-size: 0.85rem; color: #333; font-weight: 600; }
+        .template-btn:hover { border-color: var(--primary-blue); background: #eef2f8; }
     </style>
 </head>
 <body>
 
 <div class="wrapper">
-    <?php $depth = '../../'; ?>
-    <?php include '../../layout/sidebar.php'; ?>
+    <?php $depth = '../../'; include '../../layout/sidebar.php'; ?>
 
     <div id="content">
         <?php include '../../layout/header.php'; ?>
 
         <div class="main-content">
             
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-                <h2 class="page-title">Announcements</h2>
-                <a href="add_announcement.php" class="btn btn-primary">
-                    <i class="fas fa-bullhorn"></i> New Announcement
-                </a>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:25px;">
+                <h2 class="page-title">Announcement Management</h2>
+                <button onclick="toggleModal()" class="btn btn-primary" style="padding: 10px 20px;">
+                    <i class="fas fa-plus"></i> New Broadcast
+                </button>
             </div>
 
             <?php if(isset($_GET['msg'])): ?>
                 <div style="background:#d4edda; color:#155724; padding:10px; border-radius:5px; margin-bottom:15px;">
-                    <?= $_GET['msg'] == 'deleted' ? 'Announcement deleted successfully.' : 'Action completed successfully.' ?>
+                    Action completed successfully.
                 </div>
             <?php endif; ?>
 
-            <div class="card">
-                <table class="styled-table">
-                    <thead>
-                        <tr>
-                            <th>Title</th>
-                            <th>Message Preview</th>
-                            <th>Audience</th>
-                            <th>Schedule Time</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php if (empty($announcements)): ?>
-                            <tr><td colspan="6" style="text-align:center; padding:20px; color:#777;">No announcements found.</td></tr>
-                        <?php else: ?>
-                            <?php foreach ($announcements as $data): 
-                                
-                                // Determine Audience Badge
-                                $target = $data['target_audience'] ?? 'all';
-                                if ($target === 'driver') {
-                                    $badgeClass = 'badge-driver';
-                                    $icon = '<i class="fas fa-bus"></i>';
-                                    $label = 'Drivers Only';
-                                } elseif ($target === 'student') {
-                                    $badgeClass = 'badge-student';
-                                    $icon = '<i class="fas fa-user-graduate"></i>';
-                                    $label = 'Students Only';
-                                } else {
-                                    $badgeClass = 'badge-all';
-                                    $icon = '<i class="fas fa-globe"></i>';
-                                    $label = 'Everyone';
-                                }
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 30px;">
+                <div class="stat-card" style="border-left-color: #27ae60;">
+                    <div style="background: #e8f8f5; padding: 15px; border-radius: 50%; color: #27ae60;"><i class="fas fa-broadcast-tower fa-lg"></i></div>
+                    <div><h3><?= $stats['active'] ?></h3><p>Live Now</p></div>
+                </div>
+                <div class="stat-card" style="border-left-color: #3498db;">
+                    <div style="background: #ebf5fb; padding: 15px; border-radius: 50%; color: #3498db;"><i class="far fa-calendar-alt fa-lg"></i></div>
+                    <div><h3><?= $stats['scheduled'] ?></h3><p>Scheduled</p></div>
+                </div>
+                <div class="stat-card" style="border-left-color: #e74c3c;">
+                    <div style="background: #fdedec; padding: 15px; border-radius: 50%; color: #e74c3c;"><i class="fas fa-map-marker-alt fa-lg"></i></div>
+                    <div><h3><?= $stats['driver_reports'] ?></h3><p>Active Driver Alerts</p></div>
+                </div>
+            </div>
 
-                                // Status Display Logic
-                                $status = $data['status'] ?? 'sent';
-                                if ($status === 'sent') {
-                                    $statusColor = 'var(--success)';
-                                    $statusLabel = 'Sent';
-                                } else {
-                                    $statusColor = '#f0ad4e'; // Warning/Pending Color
-                                    $statusLabel = 'Scheduled';
-                                }
+            <div class="card" style="padding: 0;">
+                <div style="padding: 20px; border-bottom: 1px solid #eee;">
+                    <h3 style="margin:0; font-size: 1.1rem;"><i class="fas fa-stream"></i> System Timeline</h3>
+                </div>
+                <table class="styled-table" style="margin:0; width:100%;">
+                    <tbody>
+                        <?php if (empty($activeAnnouncements)): ?>
+                            <tr><td style="text-align:center; padding:30px; color:#888;">System feed is empty.</td></tr>
+                        <?php else: ?>
+                            <?php foreach ($activeAnnouncements as $alert): 
+                                $status = $alert['status'];
+                                $tag = $alert['tag'] ?? '#Info';
+                                $tagClass = strpos($tag, 'Emergency') !== false ? 'tag-emergency' : (strpos($tag, 'Warning') !== false || strpos($tag, 'Traffic') !== false ? 'tag-warning' : 'tag-info');
+                                
+                                // Determine Audience Display
+                                $aud = $alert['target_audience'] ?? 'all';
+                                $audIcon = $aud === 'driver' ? 'fa-bus' : ($aud === 'student' ? 'fa-user-graduate' : 'fa-globe');
+                                $audLabel = $aud === 'driver' ? 'Drivers' : ($aud === 'student' ? 'Students' : 'Everyone');
                             ?>
-                            <tr>
-                                <td style="font-weight:600; color:var(--primary-blue);"><?= htmlspecialchars($data['title'] ?? 'No Title') ?></td>
-                                
-                                <td style="color:#555; font-size:0.9rem;">
-                                    <?= htmlspecialchars(substr($data['message'] ?? '', 0, 40)) ?>...
-                                </td>
-                                
-                                <td>
-                                    <span class="badge <?= $badgeClass ?>">
-                                        <?= $icon ?> <?= $label ?>
-                                    </span>
-                                </td>
-                                
-                                <td style="font-size:0.9rem;">
-                                    <?php if(!empty($data['schedule_time'])): ?>
-                                        <i class="far fa-clock"></i> <?= date('d M, h:i A', strtotime($data['schedule_time'])) ?>
+                            <tr style="<?= $status === 'scheduled' ? 'opacity: 0.8;' : '' ?>">
+                                <td style="width: 60px; text-align:center;">
+                                    <?php if ($status === 'scheduled'): ?>
+                                        <i class="far fa-clock" style="color: #3498db;" title="Scheduled"></i>
                                     <?php else: ?>
-                                        <span style="color:#aaa;">-</span>
+                                        <i class="fas fa-check-circle" style="color: #27ae60;" title="Live"></i>
                                     <?php endif; ?>
                                 </td>
-                                
                                 <td>
-                                    <span class="badge" style="background:<?= $statusColor ?>; color:white;">
-                                        <?= $statusLabel ?>
-                                    </span>
-                                </td>
-                                
-                                <td>
-                                    <div style="display:flex; gap:5px;">
-                                        <a href="update_announcement.php?id=<?= $data['id'] ?>" class="btn" style="padding:5px 10px; font-size:0.8rem;">
-                                            <i class="fas fa-edit"></i>
-                                        </a>
-                                        <form method="POST" onsubmit="return confirm('Delete this announcement?');" style="display:inline;">
-                                            <input type="hidden" name="delete_id" value="<?= $data['id'] ?>">
-                                            <button type="submit" class="btn danger" style="padding:5px 10px; font-size:0.8rem;">
-                                                <i class="fas fa-trash"></i>
-                                            </button>
-                                        </form>
+                                    <div style="margin-bottom: 5px; display: flex; align-items: center; gap: 10px;">
+                                        <span class="feed-tag <?= $tagClass ?>"><?= htmlspecialchars($tag) ?></span>
+                                        <span class="aud-badge"><i class="fas <?= $audIcon ?>"></i> <?= $audLabel ?></span>
+                                        
+                                        <?php if($status === 'scheduled'): ?>
+                                            <span style="font-size: 0.75rem; color:#3498db; font-weight:600;"><i class="far fa-calendar-check"></i> Airs: <?= date('d M, h:i A', strtotime($alert['schedule_time'])) ?></span>
+                                        <?php endif; ?>
                                     </div>
+                                    <strong style="font-size: 1.05rem; color: #333;"><?= htmlspecialchars($alert['title']) ?></strong>
+                                    <p style="margin: 3px 0 0 0; color: #666; font-size: 0.9rem;"><?= htmlspecialchars($alert['message']) ?></p>
+                                    
+                                    <?php if(!empty($alert['location_name'])): ?>
+                                        <div style="font-size: 0.8rem; color: #e74c3c; margin-top: 5px; font-weight: 500;">
+                                            <i class="fas fa-map-marker-alt"></i> Reported near: <?= htmlspecialchars($alert['location_name']) ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </td>
+                                <td style="text-align: right; font-size: 0.85rem; color: #888;">
+                                    <div>Exp: <?= !empty($alert['expires_at']) ? date('h:i A', strtotime($alert['expires_at'])) : 'Never' ?></div>
+                                    <form method="POST" onsubmit="return confirm('Kill this broadcast?');" style="margin-top:5px;">
+                                        <input type="hidden" name="revoke_id" value="<?= $alert['id'] ?>">
+                                        <button type="submit" style="background:none; border:none; color:#e74c3c; cursor:pointer; font-size:0.8rem;"><u>Kill Switch</u></button>
+                                    </form>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
@@ -195,5 +250,114 @@ foreach ($query as $doc) {
         </div>
     </div>
 </div>
+
+<div class="modal-overlay" id="modalOverlay" onclick="toggleModal()"></div>
+<div class="slide-modal" id="createModal">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+        <h3 style="margin:0; color:var(--primary-blue);"><i class="fas fa-bullhorn"></i> New Broadcast</h3>
+        <button onclick="toggleModal()" style="background:none; border:none; font-size:1.5rem; cursor:pointer; color:#888;">&times;</button>
+    </div>
+
+    <label style="font-size: 0.85rem; font-weight: 700; color:#555; display:block; margin-bottom: 10px;">Quick Templates</label>
+    <div class="template-grid">
+        <button onclick="applyTemplate('traffic')" class="template-btn">Heavy Traffic</button>
+        <button onclick="applyTemplate('weather')" class="template-btn">Severe Weather</button>
+        <button onclick="applyTemplate('detour')" class="template-btn">Route Detour</button>
+        <button onclick="applyTemplate('maintenance')" class="template-btn">App Maintenance</button>
+        <button onclick="applyTemplate('holiday')" class="template-btn">Public Holiday</button>
+        <button onclick="applyTemplate('clear')" class="template-btn" style="background:#fff0f0; color:#c0392b; border-color:#fadbd8;">Clear Form</button>
+    </div>
+
+    <form method="POST" action="announcements_management.php">
+        <input type="hidden" name="action" value="publish">
+        
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:15px;">
+            <div>
+                <label style="font-weight:600; font-size: 0.9rem;">Category Tag</label>
+                <select name="tag" id="tagInput" class="form-control" required>
+                    <option value="#Info">#Info (Standard Notice)</option>
+                    <option value="#Important">#Important (Important Notice)</option>
+                    <option value="#Warning">#Warning (Delays / Detours)</option>
+                    <option value="#Emergency">#Emergency (Breakdowns / Safety)</option>
+                </select>
+            </div>
+            <div>
+                <label style="font-weight:600; font-size: 0.9rem;">Audience</label>
+                <select name="target_audience" id="audienceInput" class="form-control" required>
+                    <option value="all">📢 Everyone</option>
+                    <option value="student">🎓 Students Only</option>
+                    <option value="driver">🚌 Drivers Only</option>
+                </select>
+            </div>
+        </div>
+
+        <div style="margin-bottom:15px;">
+            <label style="font-weight:600; font-size: 0.9rem;">Headline</label>
+            <input type="text" name="title" id="titleInput" class="form-control" placeholder="e.g. Shuttle Service Interruption" required>
+        </div>
+
+        <div style="margin-bottom:15px;">
+            <label style="font-weight:600; font-size: 0.9rem;">Message Payload</label>
+            <textarea name="message" id="messageInput" class="form-control" rows="4" required></textarea>
+        </div>
+
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 25px; border: 1px solid #eee;">
+            <div style="margin-bottom: 15px;">
+                <label style="font-weight:600; font-size: 0.9rem;"><i class="far fa-clock"></i> Schedule Delivery (Optional)</label>
+                <input type="datetime-local" name="schedule_time" id="scheduleInput" class="form-control" style="margin-top: 5px;">
+                <small style="color:#888;">Leave blank to broadcast instantly.</small>
+            </div>
+
+            <div>
+                <label style="font-weight:600; font-size: 0.9rem;"><i class="fas fa-hourglass-half"></i> Auto-Expire (Lifespan)</label>
+                <select name="lifespan" id="lifespanInput" class="form-control" style="margin-top: 5px;">
+                    <option value="2">Remove after 2 Hours</option>
+                    <option value="12">Remove after 12 Hours</option>
+                    <option value="24" selected>Remove after 24 Hours</option>
+                    <option value="168">Remove after 1 Week</option>
+                    <option value="0">Never Expire</option>
+                </select>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width: 100%; padding: 15px; font-size: 1.1rem;">
+            <i class="fas fa-paper-plane"></i> Initialize Broadcast
+        </button>
+    </form>
+</div>
+
+<script>
+    function toggleModal() {
+        document.getElementById('modalOverlay').classList.toggle('active');
+        document.getElementById('createModal').classList.toggle('active');
+    }
+
+    // The Template Engine Data
+    const templates = {
+        'traffic': { tag: '#Warning', aud: 'all', title: 'Service Delay: Heavy Traffic', msg: 'Shuttles are currently experiencing delays of 15-20 minutes due to unexpected heavy traffic. Please plan your journey accordingly.', life: '2' },
+        'weather': { tag: '#Warning', aud: 'all', title: 'Weather Alert: Heavy Rain', msg: 'Due to severe weather conditions, shuttles will proceed at a reduced speed for safety. Expect minor delays and wait at covered shelters.', life: '3' },
+        'detour': { tag: '#Info', aud: 'driver', title: 'Temporary Route Detour', msg: 'Drivers: Road closures ahead on Main Ave. Please bypass Stop B temporarily and proceed directly to Stop C via the North Route.', life: '12' },
+        'maintenance': { tag: '#Info', aud: 'all', title: 'Scheduled App Maintenance', msg: 'The CampusPulse system will undergo brief maintenance tonight starting at 1:00 AM. Live tracking will be unavailable for 30 minutes.', life: '24' },
+        'holiday': { tag: '#Info', aud: 'all', title: 'Public Holiday Schedule', msg: 'Please be informed that regular shuttle operations are paused for the upcoming public holiday. Normal service will resume the following business day.', life: '168' },
+        'clear': { tag: '#Info', aud: 'all', title: '', msg: '', life: '24' }
+    };
+
+    function applyTemplate(type) {
+        if(templates[type]) {
+            document.getElementById('tagInput').value = templates[type].tag;
+            document.getElementById('audienceInput').value = templates[type].aud;
+            document.getElementById('titleInput').value = templates[type].title;
+            document.getElementById('messageInput').value = templates[type].msg;
+            document.getElementById('lifespanInput').value = templates[type].life;
+            
+            ['titleInput', 'messageInput'].forEach(id => {
+                const el = document.getElementById(id);
+                el.style.backgroundColor = '#e8f8f5';
+                setTimeout(() => el.style.backgroundColor = 'white', 300);
+            });
+        }
+    }
+</script>
+
 </body>
 </html>

@@ -18,8 +18,15 @@ if (!$snapshot->exists()) {
 
 $driver = $snapshot->data();
 
-// Only allow deletion if driver is inactive
-if (isset($driver['status']) && $driver['status'] === 'inactive') {
+// Only allow deletion if driver is inactive AND has no shuttle assigned
+if ((isset($driver['status']) && $driver['status'] === 'inactive') || empty($driver['status'])) {
+    
+    // Strict HR Block: Prevent deleting if they control a physical vehicle
+    if (!empty($driver['assigned_shuttle_id'])) {
+        header('Location: drivers_management.php?msg=assigned_error');
+        exit();
+    }
+
     $driverRef->delete(); // Permanently delete
     header('Location: drivers_management.php?msg=deleted');
     exit();

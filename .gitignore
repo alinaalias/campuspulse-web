@@ -1,7 +1,9 @@
 # Ignore configuration and secret files
+.env
+vendor/
 config.php
 *.json
-.env
+
 
 # Ignore OS generated files
 .DS_Store
