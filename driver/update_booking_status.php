@@ -22,24 +22,33 @@ if ($id && in_array($status, $validStatuses)) {
     ]);
 
     // 2. If 'completed', check if we need to set the shuttle to IDLE
-    if ($status === 'completed') {
+    if ($status === 'completed' || $status === 'cancelled') {
         // Find if this driver has ANY other 'onboard' or 'confirmed' bookings
         $activeCheck = $db->collection('Bookings')
-            ->where('driver_id', '==', $driverId)
+            ->where('driver_id', '=', $driverId)
             ->where('status', 'in', ['confirmed', 'arriving', 'onboard'])
             ->documents();
 
         // If no other active jobs remain in the pool, set shuttle to Idle
-        if ($activeCheck->isEmpty()) {
+        if (empty($activeCheck)) {
             $staffSnap = $db->collection('Staffs')->document($driverId)->snapshot();
             $shuttleId = $staffSnap->data()['assigned_shuttle_id'] ?? null;
 
             if ($shuttleId) {
-                $db->collection('Shuttles')->document($shuttleId)->update([
-                    ['path' => 'job_status', 'value' => 'Idle']
-                ]);
+                try {
+                    $db->collection('Shuttles')->document($shuttleId)->update([
+                        ['path' => 'job_status', 'value' => 'Idle']
+                    ]);
+                } catch (Exception $e) {}
             }
         }
+        
+        // --- CLEAR CURRENT TRIP ID ---
+        try {
+            $db->collection('Staffs')->document($driverId)->update([
+                ['path' => 'current_trip_id', 'value' => '']
+            ]);
+        } catch (Exception $e) {}
     }
 }
 

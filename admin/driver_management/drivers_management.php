@@ -24,6 +24,7 @@ $drivers = [];
 $totalActive = 0;
 $totalUnassigned = 0;
 $criticalActions = 0;
+$totalPending = 0;
 
 $todayDate = new DateTime('today');
 
@@ -56,8 +57,26 @@ foreach ($driversSnapshot as $doc) {
         $criticalActions++;
     }
 
+    // --- NEW: COMPLIANCE LOCK LOGIC ---
+    if ($data['is_expired'] && ($data['status'] ?? '') === 'active') {
+        $firestore->database()->collection('Staffs')->document($doc->id())->update([
+            ['path' => 'status', 'value' => 'inactive'],
+            ['path' => 'last_status_change_reason', 'value' => 'System Auto-Lock (Compliance Expired)'],
+            ['path' => 'last_status_change_at', 'value' => date('Y-m-d H:i:s')],
+            ['path' => 'last_status_change_admin', 'value' => 'System']
+        ]);
+        $data['status'] = 'inactive';
+        $data['last_status_change_reason'] = 'System Auto-Lock (Compliance Expired)';
+        $data['last_status_change_at'] = date('Y-m-d H:i:s');
+        $data['last_status_change_admin'] = 'System';
+    }
+
     if (($data['status'] ?? '') === 'active') {
         $totalActive++;
+    }
+
+    if (($data['status'] ?? '') === 'pending_review') {
+        $totalPending++;
     }
 
     if (empty($data['assigned_shuttle_id'])) {
@@ -106,18 +125,13 @@ function getBadge($days, $dateStr, $label)
         return "<div class='badge-cred badge-warn'>{$label}: In {$days} days</div>";
     return "<div class='badge-cred badge-valid'>{$label}: {$dateStr}</div>";
 }
+
+$pageTitle = "Drivers Management";
+$depth = '../../';
+include $depth . 'layout/admin_header.php';
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
 
-<head>
-    <meta charset="UTF-8">
-    <title>Drivers HR & Compliance - CampusPulse</title>
-    <link rel="icon" type="image/x-icon" href="../img/favicon.ico">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="../../css/style.css">
     <style>
         .badge-cred {
             padding: 4px 8px;
@@ -322,16 +336,7 @@ function getBadge($days, $dateStr, $label)
             }
         }
     </style>
-</head>
 
-<body>
-
-    <div class="wrapper">
-        <?php $depth = '../../';
-        include '../../layout/sidebar.php'; ?>
-        <div id="content">
-            <?php include '../../layout/header.php'; ?>
-            <div class="main-content">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
                     <h2 class="page-title">Fleet HR & Compliance</h2>
                     <a href="add_driver.php" class="btn btn-primary"><i class="fas fa-user-plus"></i> Add Driver</a>
@@ -373,6 +378,19 @@ function getBadge($days, $dateStr, $label)
                             <div>
                                 <div style="font-size: 0.85rem; color: #777; font-weight: 600;">CRITICAL ACTIONS</div>
                                 <div style="font-size: 1.5rem; font-weight: 700; color: #333;"><?= $criticalActions ?>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card filter-card" id="filter-pending" onclick="toggleFilter('pending')"
+                        style="border-left: 4px solid #f39c12;">
+                        <div style="display:flex; align-items:center; gap: 15px; padding: 20px;">
+                            <div
+                                style="background: rgba(243, 156, 18, 0.1); padding: 15px; border-radius: 12px; color: #f39c12;">
+                                <i class="fas fa-clipboard-check" style="font-size: 1.5rem;"></i></div>
+                            <div>
+                                <div style="font-size: 0.85rem; color: #777; font-weight: 600;">PENDING REVIEWS</div>
+                                <div style="font-size: 1.5rem; font-weight: 700; color: #333;"><?= $totalPending ?>
                                 </div>
                             </div>
                         </div>
@@ -432,7 +450,8 @@ function getBadge($days, $dateStr, $label)
                         <div class="driver-card" data-driver-id="<?= htmlspecialchars($driver['id']) ?>"
                             data-active="<?= ($driver['status'] ?? '') === 'active' ? 'true' : 'false' ?>"
                             data-unassigned="<?= empty($driver['assigned_shuttle_id']) ? 'true' : 'false' ?>"
-                            data-critical="<?= (($driver['lic_days'] !== null && $driver['lic_days'] <= 30) || ($driver['psv_days'] !== null && $driver['psv_days'] <= 30)) ? 'true' : 'false' ?>">
+                            data-critical="<?= (($driver['lic_days'] !== null && $driver['lic_days'] <= 30) || ($driver['psv_days'] !== null && $driver['psv_days'] <= 30)) ? 'true' : 'false' ?>"
+                            data-pending="<?= ($driver['status'] ?? '') === 'pending_review' ? 'true' : 'false' ?>">
 
                             <div class="dcard-header">
                                 <img src="<?= htmlspecialchars($driver['profile_pic_url']) ?>" class="dcard-img" alt="Img">
@@ -472,16 +491,24 @@ function getBadge($days, $dateStr, $label)
                             </div>
 
                             <div class="dcard-footer">
-                                <div style="display:flex; align-items:center; gap: 10px;">
+                                <div style="display:flex; flex-direction:column;">
+                                    <div style="display:flex; align-items:center; gap: 10px;">
+                                        <?php if ($driver['is_expired']): ?>
+                                            <label class="switch"><input type="checkbox" disabled><span class="slider"
+                                                    style="background:#e74c3c;"></span></label>
+                                            <span style="font-size:0.75rem; color:#e74c3c; font-weight:700;">LOCKED</span>
+                                        <?php else: ?>
+                                            <label class="switch"><input type="checkbox" <?= ($driver['status'] ?? '') === 'active' ? 'checked' : '' ?>
+                                                    onchange="toggleStatus(this, '<?= $driver['id'] ?>')"><span 
+                                                    class="slider"></span></label>
+                                            <span
+                                                style="font-size:0.8rem; color:#666; font-weight:600;"><?= strtoupper($driver['status'] ?? 'INACTIVE') ?></span>
+                                        <?php endif; ?>
+                                    </div>
                                     <?php if ($driver['is_expired']): ?>
-                                        <label class="switch"><input type="checkbox" disabled><span class="slider"
-                                                style="background:#e74c3c;"></span></label>
-                                        <span style="font-size:0.75rem; color:#e74c3c; font-weight:700;">LOCKED</span>
-                                    <?php else: ?>
-                                        <label class="switch"><input type="checkbox" <?= ($driver['status'] ?? '') === 'active' ? 'checked' : '' ?> onchange="toggleStatus(this, '<?= $driver['id'] ?>')"><span
-                                                class="slider"></span></label>
-                                        <span
-                                            style="font-size:0.8rem; color:#666; font-weight:600;"><?= strtoupper($driver['status'] ?? 'INACTIVE') ?></span>
+                                        <div
+                                            style="font-size:0.65rem; color:#e74c3c; margin-top:4px; max-width: 160px; line-height: 1.2;">
+                                            Compliance Error: Valid License & PSV required.</div>
                                     <?php endif; ?>
                                 </div>
                                 <div style="display:flex; gap:8px;">
@@ -504,9 +531,7 @@ function getBadge($days, $dateStr, $label)
                             class="fas fa-chevron-down"></i></button>
                     <div style="font-size: 0.8rem; color: #888; margin-top: 5px;" id="loadedCountText"></div>
                 </div>
-            </div>
-        </div>
-    </div>
+            
 
     <div id="hrModal" class="hr-modal-overlay" onclick="closeHrModalEvent(event)">
         <div class="hr-modal" id="hrModalBox">
@@ -545,22 +570,82 @@ function getBadge($days, $dateStr, $label)
                     style="font-size:0.75rem; color:#888; font-weight:600; display:block; margin-bottom:5px;">CREDENTIALS</label>
                 <div style="display:flex; gap:10px;">
                     <div style="flex:1;">
-                        <div style="font-size:0.7rem; color:#aaa;">LICENSE</div><img id="modalLicImg" src=""
+                        <div style="font-size:0.7rem; color:#aaa;">LICENSE</div>
+                        <img id="modalLicImg" src=""
                             style="width:100%; height:100px; object-fit:cover; border-radius:6px; border:1px solid #ddd; cursor:pointer;"
                             onclick="if(this.src.includes('http')) window.open(this.src,'_blank')">
                     </div>
                     <div style="flex:1;">
-                        <div style="font-size:0.7rem; color:#aaa;">PSV</div><img id="modalPsvImg" src=""
+                        <div style="font-size:0.7rem; color:#aaa;">PSV</div>
+                        <img id="modalPsvImg" src=""
                             style="width:100%; height:100px; object-fit:cover; border-radius:6px; border:1px solid #ddd; cursor:pointer;"
                             onclick="if(this.src.includes('http')) window.open(this.src,'_blank')">
                     </div>
                 </div>
             </div>
+
+            <div style="margin-top:20px; border-top:1px solid #eee; padding-top:15px;">
+                <label style="font-size:0.75rem; color:#888; font-weight:600; display:block; margin-bottom:5px;">STATUS
+                    HISTORY</label>
+                <div id="modalStatusHistory"
+                    style="font-size:0.85rem; color:#555; background:#f9f9f9; padding:10px; border-radius:6px; border:1px solid #eee;">
+                    No history available.
+                </div>
+            </div>
+
+            <div id="modalActionArea"
+                style="display:none; margin-top:20px; border-top:1px solid #eee; padding-top:15px;">
+                <div id="rejectReasonBox" style="display:none; margin-bottom: 15px;">
+                    <label
+                        style="font-size:0.75rem; color:#c0392b; font-weight:600; display:block; margin-bottom:5px;">REJECTION
+                        REASON</label>
+                    <textarea id="reviewRejectReason" rows="2" class="form-control"
+                        placeholder="Please specify why the documents are rejected so the driver can fix them."></textarea>
+                </div>
+                <div style="display:flex; gap:10px;">
+                    <button class="btn btn-primary" id="btnApproveReview"
+                        style="flex:1; padding: 12px; background: #2ecc71; border: none; font-weight: 600;"
+                        onclick="reviewDriverAction('approve')" onchange="showGlobalLoader('Approving Documents...');">
+                        <i class="fas fa-check-circle"></i> Approve Documents
+                    </button>
+                    <button class="btn btn-primary" id="btnRejectReview"
+                        style="flex:1; padding: 12px; background: #e74c3c; border: none; font-weight: 600;"
+                        onclick="reviewDriverAction('reject')" onchange="showGlobalLoader('Rejecting Documents...');">
+                        <i class="fas fa-times-circle"></i> Reject Documents
+                    </button>
+                    <button class="btn btn-primary" id="btnConfirmReject"
+                        style="display:none; flex:1; padding: 12px; background: #c0392b; border: none; font-weight: 600;"
+                        onclick="submitRejectReview()">
+                        <i class="fas fa-exclamation-triangle"></i> Confirm Reject
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
+    <div id="statusReasonModal" class="hr-modal-overlay" onclick="closeStatusModalEvent(event)" style="z-index: 1005;">
+        <div class="hr-modal" style="max-width: 400px; padding: 25px;">
+            <i class="fas fa-times hr-modal-close" onclick="closeStatusModal()"></i>
+            <h3 id="statusModalTitle" style="margin-top: 0; color: #333;">Change Driver Status</h3>
+            <p id="statusModalDesc" style="color:#666; font-size:0.9rem; margin-bottom:20px;"></p>
+            <div class="form-group" style="margin-bottom: 20px;">
+                <label style="font-size:0.8rem; font-weight:600; color:#555; display:block; margin-bottom:8px;">Reason
+                    for Action</label>
+                <select id="statusReasonSelect" class="form-control" onchange="checkReasonSelection()"
+                    style="width: 100%; padding: 10px; font-size: 0.95rem; border: 1px solid #ddd; border-radius: 8px;">
+                    <option value="">-- Select a reason --</option>
+                </select>
+            </div>
+            <button id="confirmStatusBtn" class="btn btn-primary" style="width:100%; padding: 12px; font-weight: 600;"
+                disabled onclick="confirmStatusChange()">Confirm Change</button>
+        </div>
+    </div>
+
+    <button id="backToTopBtn" onclick="window.scrollTo({top: 0, behavior: 'smooth'})"
+        style="display:none; position:fixed; bottom:30px; right:30px; z-index:999; background:var(--primary-blue); color:white; border:none; width:50px; height:50px; border-radius:50%; box-shadow:0 4px 15px rgba(0,0,0,0.3); cursor:pointer; font-size:1.2rem; transition:0.3s;">
+        <i class="fas fa-arrow-up"></i>
+    </button>
+
     <script>const driverDataset = <?= json_encode($drivers) ?>;</script>
     <script src="manage_driver.js?v=<?= time() ?>"></script>
-</body>
-
-</html>
+<?php include $depth . 'layout/admin_footer.php'; ?>

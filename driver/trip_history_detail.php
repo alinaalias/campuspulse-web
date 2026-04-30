@@ -24,6 +24,13 @@ $tripData = null;
 $passengerLog = [];
 $routeDetails = [];
 
+// Merged Variables
+$isCompleted = isset($_GET['completed']) && $_GET['completed'] === 'true';
+$totalFare = 0;
+$ratingAvg = 0;
+$ratingList = [];
+$tripLogs = [];
+
 try {
     $db = $firestore->database();
 
@@ -60,6 +67,7 @@ try {
 
         foreach ($bookingsQuery as $bDoc) {
             $bData = $bDoc->data();
+            $totalFare += (float)($bData['fare'] ?? 0);
 
             // Get Student Name
             $studentName = "Unknown Student";
@@ -102,6 +110,7 @@ try {
             throw new Exception("On-Demand record not found or unauthorized.");
         }
         $bData = $bookingSnap->data();
+        $totalFare = (float)($bData['fare'] ?? 0);
 
         $tripData = $bData;
         $tripData['id'] = $bookingSnap->id();
@@ -176,13 +185,63 @@ try {
     exit();
 }
 
-// Calculate Display Status
+$tripLogs = $tripData['trip_logs'] ?? [];
+if (!empty($tripLogs)) {
+    usort($tripLogs, function($a, $b) {
+        return strtotime($a['timestamp']) - strtotime($b['timestamp']);
+    });
+}
+
+// Fetch Ratings
+$totalRating = 0;
+$queryField = ($tripType === 'schedule') ? 'schedule_id' : 'booking_id';
+// Use tripId as is since for ondemand Bookings document ID is passed. Wait, Ratings collection uses booking_id for on-demand and schedule_id for schedule
+// actually let's check both
+$ratingsQuery = $db->collection('Ratings')->where($tripType === 'schedule' ? 'schedule_id' : 'trip_id', '=', $tripId)->documents();
+foreach ($ratingsQuery as $doc) {
+    if ($doc->exists()) {
+        $d = $doc->data();
+        $ratingList[] = $d;
+        $totalRating += (float)($d['rating'] ?? 0);
+    }
+}
+if(empty($ratingList) && $tripType === 'ondemand'){
+    $ratingsQuery2 = $db->collection('Ratings')->where('booking_id', '=', $tripId)->documents();
+    foreach ($ratingsQuery2 as $doc) {
+        if ($doc->exists()) {
+            $d = $doc->data();
+            $ratingList[] = $d;
+            $totalRating += (float)($d['rating'] ?? 0);
+        }
+    }
+}
+
+$ratingAvg = count($ratingList) > 0 ? round($totalRating / count($ratingList), 1) : 0;
+
+// =========================================================
+// APPLY SYNCED 15-MIN BUFFER LOGIC FOR ACCURATE DISPLAY
+// =========================================================
 $statusLower = strtolower($tripData['status'] ?? 'unknown');
+
+if ($tripType === 'schedule') {
+    $tripTimestamp = strtotime(($tripData['date'] ?? '') . ' ' . ($tripData['departure_time'] ?? ''));
+    if ($tripTimestamp && (time() > ($tripTimestamp + 900))) {
+        // If it's past the buffer and was never completed or manually cancelled, force display as Missed
+        if ($statusLower !== 'completed' && $statusLower !== 'cancelled') {
+            $statusLower = 'missed';
+            $tripData['status'] = 'missed';
+        }
+    }
+}
+
+// Calculate UI Classes based on final status
 $statusClass = 'status-cancelled'; // default red
 if ($statusLower === 'completed')
     $statusClass = 'status-completed';
 elseif ($statusLower === 'missed')
     $statusClass = 'status-missed';
+// =========================================================
+
 ?>
 
 <!DOCTYPE html>
@@ -325,9 +384,9 @@ elseif ($statusLower === 'missed')
 
     <div class="driver-header" style="height: 120px; align-items: flex-start; padding-top: 30px;">
         <div style="width: 100%; display: flex; align-items: center; gap: 15px;">
-            <a href="driver_trip_history.php" style="color: white; font-size: 1.2rem;"><i
+            <a href="<?= $isCompleted ? 'driver_dashboard.php' : 'driver_trip_history.php' ?>" style="color: white; font-size: 1.2rem;"><i
                     class="fas fa-arrow-left"></i></a>
-            <h2 style="margin: 0; font-size: 1.4rem; font-weight: 600;">Trip Summary</h2>
+            <h2 style="margin: 0; font-size: 1.4rem; font-weight: 600;"><?= $isCompleted ? 'Trip Completed! 🎉' : 'Trip Summary' ?></h2>
         </div>
     </div>
 
@@ -345,17 +404,29 @@ elseif ($statusLower === 'missed')
             </span>
 
             <div class="stat-grid">
-                <div class="stat-box" style="border-right: 1px solid #eee;">
+                <div class="stat-box" style="border-right: 1px solid #eee; border-bottom: 1px solid #eee; padding-bottom: 15px;">
                     <div class="label">Date & Time</div>
                     <div class="value">
                         <?= date('d M Y', strtotime($tripData['date'])) ?><br>
                         <span style="color: var(--primary-blue);"><?= $tripData['departure_time'] ?></span>
                     </div>
                 </div>
-                <div class="stat-box">
+                <div class="stat-box" style="border-bottom: 1px solid #eee; padding-bottom: 15px;">
                     <div class="label">Vehicle</div>
                     <div class="value" style="padding-top: 10px;">
                         <?= htmlspecialchars($tripData['shuttle_id'] ?? 'N/A') ?>
+                    </div>
+                </div>
+                <div class="stat-box" style="border-right: 1px solid #eee; padding-top: 15px;">
+                    <div class="label">Average Rating</div>
+                    <div class="value" style="color: #f39c12; font-size: 1.2rem; padding-top: 5px;">
+                        <i class="fas fa-star" style="font-size: 1.1rem; margin-right: 4px;"></i><?= $ratingAvg > 0 ? $ratingAvg : '--' ?>
+                    </div>
+                </div>
+                <div class="stat-box" style="padding-top: 15px;">
+                    <div class="label">Total Fare</div>
+                    <div class="value" style="color: #2ecc71; font-size: 1.2rem; padding-top: 5px;">
+                        RM <?= number_format($totalFare, 2) ?>
                     </div>
                 </div>
             </div>
@@ -413,6 +484,32 @@ elseif ($statusLower === 'missed')
                 <?php endforeach; ?>
             <?php endif; ?>
         </div>
+
+        <!-- Collapsible Trip Logs -->
+        <details class="trip-logs-container" style="margin-top: 20px; background: white; border-radius: 16px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03); overflow: hidden;">
+            <summary style="padding: 15px 20px; font-weight: 600; color: #555; cursor: pointer; display: flex; justify-content: space-between; align-items: center; list-style: none;">
+                <span>View Trip Logs</span>
+                <i class="fas fa-chevron-down" style="color: #aaa;"></i>
+            </summary>
+            <div style="padding: 0 20px 20px;">
+                <?php if (!empty($tripLogs)): ?>
+                    <?php foreach ($tripLogs as $log): ?>
+                        <div style="border-bottom: 1px dashed #eee; padding: 10px 0; font-size: 0.85rem; display: flex; gap: 15px;">
+                            <div style="font-weight: 700; color: #a0aec0; min-width: 45px;"><?= date('H:i', strtotime($log['timestamp'])) ?></div>
+                            <div style="color: #2d3748; flex: 1;"><?= $log['message'] ?></div>
+                        </div>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <p style="color: #999; text-align: center; margin: 10px 0;">No logs available.</p>
+                <?php endif; ?>
+            </div>
+        </details>
+
+        <?php if ($isCompleted): ?>
+            <a href="driver_dashboard.php" class="btn btn-primary" style="display: block; text-align: center; margin-top: 25px; border-radius: 16px; padding: 15px; font-weight:bold; width:100%; box-sizing:border-box;">BACK TO DASHBOARD</a>
+        <?php else: ?>
+            <a href="driver_trip_history.php" class="btn btn-secondary" style="display: block; text-align: center; margin-top: 25px; border-radius: 16px; padding: 15px; background: #e2e8f0; color: #4a5568; font-weight:bold; width:100%; box-sizing:border-box;">BACK TO HISTORY</a>
+        <?php endif; ?>
 
     </div>
 

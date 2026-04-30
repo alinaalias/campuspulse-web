@@ -4,11 +4,38 @@
 function toggleStatus() {
     const dot = document.getElementById('statusDot');
     const text = document.getElementById('statusText');
-    const isOnline = text.innerText === 'Online';
+    const isOnline = text.innerText.toUpperCase() === 'ONLINE';
 
-    text.innerText = isOnline ? 'Offline' : 'Online';
+    // Optimistically update UI
+    const newStatus = isOnline ? 'OFFLINE' : 'ONLINE';
+    text.innerText = newStatus;
+    text.style.color = isOnline ? 'white' : '#2ecc71';
+
     dot.style.background = isOnline ? '#bdc3c7' : '#2ecc71';
     dot.style.boxShadow = isOnline ? 'none' : '0 0 8px #2ecc71';
+
+    // Update parent pill style
+    const pill = text.closest('.status-pill');
+    if (pill) {
+        pill.style.background = isOnline ? 'rgba(255,255,255,0.15)' : 'rgba(46, 204, 113, 0.15)';
+        pill.style.border = isOnline ? '1px solid rgba(255,255,255,0.2)' : '1px solid rgba(46, 204, 113, 0.3)';
+    }
+
+    // Toggle Phase 1 UI Cards
+    const offlineCard = document.getElementById('offline-card');
+    const scanningCard = document.getElementById('scanning-card');
+    if (offlineCard && scanningCard) {
+        if (!isOnline) { // Switching to ONLINE
+            offlineCard.style.display = 'none';
+            scanningCard.style.display = 'block';
+        } else { // Switching to OFFLINE
+            offlineCard.style.display = 'block';
+            scanningCard.style.display = 'none';
+            // Also hide pinging card if suddenly offline
+            const pingContainer = document.getElementById('pinging-card-container');
+            if (pingContainer) pingContainer.innerHTML = '';
+        }
+    }
 
     // Update Firestore is_online status immediately if assigned a shuttle
     if (typeof driverAssignedShuttle !== 'undefined' && driverAssignedShuttle && typeof firebase !== 'undefined' && firebase.apps.length > 0) {
@@ -20,7 +47,7 @@ function toggleStatus() {
     }
 
     fetch('toggle_status.php', { method: 'POST' }).then(() => {
-        setTimeout(() => window.location.reload(), 300);
+        // UI is updated instantly, no hard reload required.
     });
 }
 
@@ -28,7 +55,7 @@ function toggleStatus() {
 // ==========================================
 // 2. DYNAMIC GEOLOCATION & BOTTOM SHEET
 // ==========================================
-function toggleReportSheet() {
+function toggleReportSheet(e) {
     if (typeof isDragging !== 'undefined' && isDragging) return;
 
     const sheet = document.getElementById('reportSheet');
@@ -51,7 +78,7 @@ function toggleReportSheet() {
 
 function getLocation() {
     if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(showPosition, showError, { timeout: 10000 });
+        navigator.geolocation.getCurrentPosition(showPosition, showError, { enableHighAccuracy: true, timeout: 15000 });
     } else {
         document.getElementById("locationStatusText").innerText = "Geolocation not supported.";
     }
@@ -67,7 +94,12 @@ function showPosition(position) {
 
     const apiUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
 
-    fetch(apiUrl)
+    fetch(apiUrl, {
+        headers: {
+            'Accept-Language': 'en-US,en;q=0.9',
+            'User-Agent': 'CampusPulseApp/1.0'
+        }
+    })
         .then(response => response.json())
         .then(data => {
             const addr = data.address || {};
@@ -136,32 +168,32 @@ function showSendingFinal(btn) {
 // 4. DRAGGABLE FLOATING BUTTON
 // ==========================================
 const fab = document.getElementById('draggableFab');
-let isDragging = false;
-let startY, startTop;
+let isFabDragging = false;
+let fabStartY, fabStartTop; // Renamed to avoid clashing with preview_modal.php
 
 const dragStart = (e) => {
     if (!fab) return;
-    isDragging = false;
+    isFabDragging = false;
     let clientY = e.type.includes('mouse') ? e.clientY : e.touches[0].clientY;
-    startY = clientY;
+    fabStartY = clientY;
 
     const rect = fab.getBoundingClientRect();
-    startTop = rect.top;
+    fabStartTop = rect.top;
 
     fab.style.bottom = 'auto';
-    fab.style.top = startTop + 'px';
+    fab.style.top = fabStartTop + 'px';
     fab.style.transition = 'none';
 };
 
 const dragMove = (e) => {
-    if (startY === undefined || !fab) return;
+    if (fabStartY === undefined || !fab) return;
 
     let clientY = e.type.includes('mouse') ? e.clientY : e.touches[0].clientY;
-    let deltaY = clientY - startY;
+    let deltaY = clientY - fabStartY;
 
     if (Math.abs(deltaY) > 5) {
-        isDragging = true;
-        let newTop = startTop + deltaY;
+        isFabDragging = true;
+        let newTop = fabStartTop + deltaY;
 
         const maxY = window.innerHeight - fab.offsetHeight - 80;
         const minY = 20;
@@ -174,8 +206,9 @@ const dragMove = (e) => {
 
 const dragEnd = (e) => {
     if (!fab) return;
-    startY = undefined;
+    fabStartY = undefined;
     fab.style.transition = 'transform 0.2s';
+    setTimeout(() => { isFabDragging = false; }, 50);
 };
 
 if (fab) {
@@ -308,8 +341,11 @@ function startGpsBroadcast() {
     );
 }
 
+
+
 document.addEventListener("DOMContentLoaded", function () {
     if (typeof driverIsOnline !== 'undefined' && driverIsOnline && typeof driverAssignedShuttle !== 'undefined' && driverAssignedShuttle) {
         startGpsBroadcast();
     }
 });
+

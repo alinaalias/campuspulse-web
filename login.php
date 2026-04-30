@@ -32,6 +32,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['full_name'] = $user['full_name'] ?? 'Admin';
             $_SESSION['profile_pic'] = $user['profile_pic'] ?? '';
 
+            // strictly force offline parameter on fresh login to prevent ghost-online state
+            if ($user['role'] === 'driver') {
+                try {
+                    $firestore->database()->collection('Staffs')->document($_SESSION['user_id'])->update([
+                        ['path' => 'duty_status', 'value' => 'offline'],
+                        ['path' => 'current_trip_id', 'value' => null]
+                    ]);
+                } catch (Exception $e) {}
+            }
+
             // Redirect based on role
             if ($user['role'] === 'admin') {
                 header("Location: admin/admin_dashboard.php");

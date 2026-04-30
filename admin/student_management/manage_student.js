@@ -1,42 +1,99 @@
-function toggleStudentStatus(checkbox, studentId) {
-    // 1. Determine the NEW status based on the checkbox state
-    // If checked, we want to make it 'active'. If unchecked, 'inactive'.
-    const newStatus = checkbox.checked ? 'active' : 'inactive';
-    const actionName = checkbox.checked ? 'activate' : 'deactivate';
+let pendingStudentId = null;
+let pendingStudentStatus = null;
+let pendingStudentCheckbox = null;
 
-    // 2. Confirmation Popup
-    if (!confirm("Are you sure you want to " + actionName + " this student account?")) {
-        // If user cancels, revert the checkbox immediately to its previous state
-        checkbox.checked = !checkbox.checked;
-        return;
+function toggleStudentStatus(checkbox, studentId) {
+    // Intercept default behavior
+    pendingStudentId = studentId;
+    pendingStudentStatus = checkbox.checked ? 'active' : 'inactive';
+    pendingStudentCheckbox = checkbox;
+
+    const title = document.getElementById('studentStatusModalTitle');
+    const desc = document.getElementById('studentStatusModalDesc');
+    const select = document.getElementById('studentStatusReasonSelect');
+    const card = document.getElementById('studentStatusModalCard');
+
+    card.classList.remove('theme-activate', 'theme-deactivate');
+
+    if (pendingStudentStatus === 'active') {
+        title.innerText = 'Activate Student Account';
+        desc.innerText = 'Select a reason for re-activating this student.';
+        card.classList.add('theme-activate');
+        select.innerHTML = `
+            <option value="">-- Select a reason --</option>
+            <option value="Re-enrolment">Re-enrolment</option>
+            <option value="Suspension Lifted">Suspension Lifted</option>
+            <option value="Financial Clearance">Financial Clearance</option>
+            <option value="Correction of Error">Correction of Error</option>
+            <option value="Other">Other</option>
+        `;
+    } else {
+        title.innerText = 'Deactivate Student Account';
+        desc.innerText = 'Select a reason for deactivating this student.';
+        card.classList.add('theme-deactivate');
+        select.innerHTML = `
+            <option value="">-- Select a reason --</option>
+            <option value="Graduated">Graduated</option>
+            <option value="Suspended (Disciplinary)">Suspended (Disciplinary)</option>
+            <option value="Financial Bar">Financial Bar</option>
+            <option value="Withdrawn/Quit">Withdrawn/Quit</option>
+            <option value="Academic Termination">Academic Termination</option>
+            <option value="Other">Other</option>
+        `;
     }
 
-    // 3. Disable to prevent double-clicking while processing
-    checkbox.disabled = true;
+    document.getElementById('confirmStudentStatusBtn').disabled = true;
+    document.getElementById('studentStatusReasonModal').style.display = 'flex';
+}
 
-    // 4. Send Request
+function checkStudentReasonSelection() {
+    const select = document.getElementById('studentStatusReasonSelect');
+    document.getElementById('confirmStudentStatusBtn').disabled = select.value === '';
+}
+
+function closeStudentStatusModal() {
+    document.getElementById('studentStatusReasonModal').style.display = 'none';
+    if (pendingStudentCheckbox) {
+        // Revert visually since cancelled
+        pendingStudentCheckbox.checked = !pendingStudentCheckbox.checked;
+    }
+    pendingStudentId = null;
+    pendingStudentStatus = null;
+    pendingStudentCheckbox = null;
+}
+
+function closeStudentStatusModalEvent(e) {
+    if (e.target.id === 'studentStatusReasonModal') closeStudentStatusModal();
+}
+
+function confirmStudentStatusChange() {
+    const reason = document.getElementById('studentStatusReasonSelect').value;
+    const studentId = pendingStudentId;
+    const newStatus = pendingStudentStatus;
+    const btn = document.getElementById('confirmStudentStatusBtn');
+
+    // Prevent double-clicks
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+    btn.disabled = true;
+    document.getElementById('studentStatusReasonSelect').disabled = true;
+
     fetch('toggle_student_status.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'id=' + encodeURIComponent(studentId) + '&status=' + encodeURIComponent(newStatus)
+        body: 'id=' + encodeURIComponent(studentId) + '&status=' + encodeURIComponent(newStatus) + '&reason=' + encodeURIComponent(reason)
     })
     .then(res => res.json())
     .then(data => {
-        checkbox.disabled = false; // Re-enable
-        
         if (data.success) {
-            // Success! Reload to update the UI (especially the delete button state)
-            location.reload(); 
+            location.reload();
         } else {
-            // Failure
             alert("Error: " + (data.message || "Failed to update status"));
-            checkbox.checked = !checkbox.checked; // Revert switch
+            closeStudentStatusModal();
         }
     })
     .catch(err => {
         console.error(err);
         alert("Network Error: Could not reach server.");
-        checkbox.disabled = false;
-        checkbox.checked = !checkbox.checked; // Revert switch
+        closeStudentStatusModal();
     });
 }

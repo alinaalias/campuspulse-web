@@ -1,5 +1,7 @@
 <?php
 session_start();
+// FIX: Force the server to use Malaysian time for all date() calculations
+date_default_timezone_set('Asia/Kuala_Lumpur');
 require_once '../config.php';
 
 // 1. Security
@@ -13,11 +15,13 @@ $driverId = $_SESSION['user_id'];
 $filterDate = $_GET['filter_date'] ?? '';
 
 // ===================================================================================
-// DATA FETCHING & MERGING
+// DATA FETCHING & MERGING (Firebase Index Bypass & Catch-All Logic)
 // ===================================================================================
 $historyLog = [];
+$now = time();
+$bufferSeconds = 900; // 15 MINUTES BUFFER TIME
 
-// A. FETCH SCHEDULES
+// A. FETCH SCHEDULES (Query by driver_id ONLY to bypass index requirements)
 $schedQuery = $firestore->database()->collection('Schedules')
     ->where('driver_id', '=', $driverId)
     ->documents();
@@ -28,29 +32,39 @@ foreach ($schedQuery as $doc) {
     $d = $doc->data();
     $id = $doc->id();
 
-    // Apply Date Filter if set
-    if ($filterDate && $d['date'] !== $filterDate)
+    // Parse timestamp
+    $dateStr = trim($d['date'] ?? '');
+    $timeStr = trim($d['departure_time'] ?? '');
+    $tripTimestamp = strtotime("$dateStr $timeStr");
+    if (!$tripTimestamp)
+        $tripTimestamp = $now;
+
+    $standardDate = date('Y-m-d', $tripTimestamp);
+
+    // Apply Date Filter if user searched for a specific date
+    if ($filterDate && $standardDate !== $filterDate)
         continue;
 
-    $isPast = ($d['date'] < date('Y-m-d')) || ($d['date'] === date('Y-m-d') && $d['departure_time'] < date('H:i'));
-    $dbStatus = strtolower($d['status'] ?? 'scheduled');
+    $isPastBuffer = ($now > ($tripTimestamp + $bufferSeconds));
+    $dbStatus = trim(strtolower($d['status'] ?? 'unknown'));
 
-    // Only show past trips or explicitly completed ones
-    if ($isPast || $dbStatus === 'completed') {
+    // CATCH-ALL RULE: If it's explicitly finished, OR if the time + 15 mins has passed, it belongs in History.
+    if (in_array($dbStatus, ['completed', 'cancelled', 'missed']) || $isPastBuffer) {
+
         $route = "Scheduled Trip";
-        if (isset($d['route_id'])) {
+        if (!empty($d['route_id'])) {
             $rSnap = $firestore->database()->collection('Routes')->document($d['route_id'])->snapshot();
             if ($rSnap->exists())
                 $route = $rSnap->data()['route_name'];
         }
 
-        // ACCURATE STATUS LOGIC
+        // Accurately override UI status for abandoned trips
         if ($dbStatus === 'completed') {
             $displayStatus = 'Completed';
         } elseif ($dbStatus === 'cancelled') {
             $displayStatus = 'Cancelled';
-        } elseif ($isPast && $dbStatus !== 'completed') {
-            $displayStatus = 'Missed'; // The time passed, but it was never marked completed
+        } elseif ($isPastBuffer && $dbStatus !== 'completed') {
+            $displayStatus = 'Missed'; // Catches 'published', 'scheduled', and abandoned 'active' trips
         } else {
             $displayStatus = ucfirst($dbStatus);
         }
@@ -59,56 +73,61 @@ foreach ($schedQuery as $doc) {
             'id' => $id,
             'type' => 'schedule',
             'title' => $route,
-            'subtitle' => 'Bus Route',
-            'date' => $d['date'],
-            'time' => $d['departure_time'],
+            'subtitle' => 'Shuttle Route',
+            'date' => $standardDate,
+            'time' => $timeStr,
             'status' => $displayStatus,
             'count' => $d['booked_count'] ?? 0,
-            'timestamp' => strtotime($d['date'] . ' ' . $d['departure_time'])
+            'timestamp' => $tripTimestamp
         ];
     }
 }
 
-// B. FETCH COMPLETED ON-DEMAND REQUESTS
+// B. FETCH ON-DEMAND REQUESTS (Query by driver_id ONLY to bypass index requirements)
 $odQuery = $firestore->database()->collection('Bookings')
     ->where('driver_id', '=', $driverId)
-    ->where('type', '=', 'ondemand') // <--- THE MISSING FILTER ADDED HERE
-    ->where('status', 'in', ['completed', 'cancelled', 'missed'])
     ->documents();
 
 foreach ($odQuery as $doc) {
     if (!$doc->exists())
         continue;
     $d = $doc->data();
+
+    // PHP-Side Filter: Only process On-Demand types
+    if (strtolower($d['type'] ?? '') !== 'ondemand')
+        continue;
+
     $id = $doc->id();
 
-    // PRIORITY TIMESTAMP: When was it actually completed?
-    $rawTs = $d['completed_at'] ?? $d['updated_at'] ?? $d['created_at'] ?? time();
-    if (is_object($rawTs) && method_exists($rawTs, 'get')) {
-        $ts = $rawTs->get()->format('U');
-    } elseif (!is_numeric($rawTs)) {
-        $ts = strtotime($rawTs);
-    } else {
-        $ts = $rawTs;
-    }
-
+    // Priority Timestamp parsing
+    $rawTs = $d['completed_at'] ?? $d['updated_at'] ?? $d['created_at'] ?? $now;
+    $ts = (is_object($rawTs) && method_exists($rawTs, 'get')) ? $rawTs->get()->format('U') : (is_numeric($rawTs) ? $rawTs : strtotime($rawTs));
     $dateStr = date('Y-m-d', $ts);
 
-    // Apply Date Filter if set
+    // Apply Date Filter
     if ($filterDate && $dateStr !== $filterDate)
         continue;
 
-    $historyLog[] = [
-        'id' => $id,
-        'type' => 'ondemand',
-        'title' => 'On-Demand Ride',
-        'subtitle' => ' to ' . ($d['destination_name'] ?? 'Destination'),
-        'date' => $dateStr,
-        'time' => date('H:i', $ts),
-        'status' => ucfirst($d['status'] ?? 'Unknown'),
-        'count' => 1,
-        'timestamp' => $ts
-    ];
+    $dbStatus = trim(strtolower($d['status'] ?? 'unknown'));
+    $isExplicitlyFinished = in_array($dbStatus, ['completed', 'cancelled', 'missed']);
+    $isStaleActive = in_array($dbStatus, ['confirmed', 'arriving', 'onboard']) && ($dateStr < date('Y-m-d', $now));
+
+    // Catch-All for On-Demand
+    if ($isExplicitlyFinished || $isStaleActive) {
+        $displayStatus = $isStaleActive ? 'Missed' : ucfirst($dbStatus);
+
+        $historyLog[] = [
+            'id' => $id,
+            'type' => 'ondemand',
+            'title' => 'On-Demand Ride',
+            'subtitle' => ' to ' . ($d['destination_name'] ?? 'Destination'),
+            'date' => $dateStr,
+            'time' => date('H:i', $ts),
+            'status' => $displayStatus,
+            'count' => 1,
+            'timestamp' => $ts
+        ];
+    }
 }
 
 // C. SORT BY NEWEST FIRST
@@ -131,16 +150,26 @@ usort($historyLog, function ($a, $b) {
 
     <style>
         .filter-form {
-            display: flex;
-            gap: 12px;
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 10px;
             margin-bottom: 25px;
             align-items: center;
+        }
+
+        @media (max-width: 480px) {
+            .filter-form {
+                grid-template-columns: 1fr;
+            }
+
+            .btn-clear {
+                justify-content: center;
+            }
         }
 
         .filter-input {
             width: 100%;
             padding: 14px 15px 14px 45px;
-            /* Extra left padding for the icon */
             border: none;
             border-radius: 14px;
             font-family: inherit;
@@ -151,6 +180,7 @@ usort($historyLog, function ($a, $b) {
             outline: none;
             transition: box-shadow 0.2s;
             box-sizing: border-box;
+            display: block;
         }
 
         .filter-input:focus {
@@ -161,7 +191,7 @@ usort($historyLog, function ($a, $b) {
             background: #ffebee;
             color: #e74c3c;
             text-decoration: none;
-            padding: 14px 20px;
+            padding: 14px 18px;
             border-radius: 14px;
             font-weight: 600;
             font-size: 0.9rem;
@@ -170,13 +200,14 @@ usort($historyLog, function ($a, $b) {
             align-items: center;
             gap: 6px;
             transition: transform 0.2s;
+            white-space: nowrap;
+            flex-shrink: 0;
         }
 
         .btn-clear:active {
             transform: scale(0.95);
         }
 
-        /* Make the card act like a button */
         .history-card-link {
             display: block;
             text-decoration: none;
@@ -190,7 +221,6 @@ usort($historyLog, function ($a, $b) {
             border-color: var(--primary-blue);
         }
 
-        /* Specific Status Colors */
         .status-completed {
             color: #2ecc71;
             background: #eafaf1;
@@ -216,18 +246,19 @@ usort($historyLog, function ($a, $b) {
 
 <body class="driver-body">
 
-    <div class="driver-header" style="height: 120px; align-items: flex-start; padding-top: 30px;">
+    <div class="driver-header">
         <div style="width: 100%; display: flex; align-items: center; gap: 15px;">
-            <a href="driver_dashboard.php" style="color: white; font-size: 1.2rem;"><i
-                    class="fas fa-arrow-left"></i></a>
-            <h2 style="margin: 0; font-size: 1.4rem; font-weight: 600;">Trip History</h2>
+            <a href="driver_schedule.php" style="color: white; font-size: 1.2rem;"><i class="fas fa-arrow-left"></i></a>
+            <div>
+                <h2 style="margin: 0; font-size: 1.4rem; font-weight: 700;">Trip History</h2>
+            </div>
         </div>
     </div>
 
-    <div class="driver-container" style="margin-top: -50px;">
+    <div class="driver-container">
 
         <form method="GET" class="filter-form">
-            <div style="position: relative; flex: 1;">
+            <div style="position: relative; width: 100%;">
                 <i class="fas fa-calendar-alt"
                     style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: var(--primary-blue); font-size: 1.1rem; pointer-events: none;"></i>
 
@@ -245,7 +276,7 @@ usort($historyLog, function ($a, $b) {
         <?php if (empty($historyLog)): ?>
             <div class="driver-card" style="text-align: center; padding: 50px 20px;">
                 <i class="fas fa-history" style="font-size: 3rem; color: #eee; margin-bottom: 15px;"></i>
-                <p style="color: #999;">No trips found for this criteria.</p>
+                <p style="color: #999;">No trips found.</p>
             </div>
         <?php else: ?>
 
@@ -285,7 +316,7 @@ usort($historyLog, function ($a, $b) {
                             <div class="h-sub">
                                 <?= htmlspecialchars($trip['subtitle']) ?>
                                 <?php if ($trip['type'] === 'schedule'): ?>
-                                    &bull; <?= $trip['count'] ?> Passengers
+                                    • <?= $trip['count'] ?> Passengers
                                 <?php endif; ?>
                             </div>
                         </div>

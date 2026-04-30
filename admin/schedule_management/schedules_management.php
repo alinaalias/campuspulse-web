@@ -12,24 +12,38 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
 $today = date('Y-m-d');
 
 // =================================================================================
-// 1. AUTO-ARCHIVE LOGIC (Lazy Execution)
+// 1. AUTO-ARCHIVE & MISSED LOGIC (Lazy Execution)
 // =================================================================================
-$expiredQuery = $firestore->database()->collection('Schedules')
-    ->where('date', '<', $today)
-    ->limit(50)
-    ->documents();
+$nowTime = time();
+$batch = $firestore->database()->batch();
+$updatesCount = 0;
 
-if (!$expiredQuery->isEmpty()) {
-    $batch = $firestore->database()->batch();
-    $updatesCount = 0;
-    foreach ($expiredQuery as $doc) {
-        if (($doc->data()['status'] ?? '') !== 'archived') {
-            $batch->update($doc->reference(), [['path' => 'status', 'value' => 'archived']]);
+// A. Archive Past Days
+$expiredQuery = $firestore->database()->collection('Schedules')->where('date', '<', $today)->limit(30)->documents();
+foreach ($expiredQuery as $doc) {
+    if (($doc->data()['status'] ?? '') !== 'archived') {
+        $batch->update($doc->reference(), [['path' => 'status', 'value' => 'archived']]);
+        $updatesCount++;
+    }
+}
+
+// B. Mark Today's Overdue Schedules as Missed (15 Mins / 900 seconds)
+$todayQuery = $firestore->database()->collection('Schedules')->where('date', '=', $today)->documents();
+foreach ($todayQuery as $doc) {
+    $d = $doc->data();
+    $status = $d['status'] ?? '';
+    // If it's still waiting to go, but 15 minutes have passed
+    if (in_array($status, ['published', 'active'])) {
+        $schedTime = strtotime($d['date'] . ' ' . ($d['departure_time'] ?? '00:00'));
+        if ($schedTime > 0 && ($nowTime - $schedTime) > 900) {
+            $batch->update($doc->reference(), [['path' => 'status', 'value' => 'missed']]);
             $updatesCount++;
         }
     }
-    if ($updatesCount > 0)
-        $batch->commit();
+}
+
+if ($updatesCount > 0) {
+    $batch->commit();
 }
 
 // =================================================================================
@@ -81,38 +95,46 @@ $displayActive = [];
 $displayArchived = [];
 $uniqueShuttles = [];
 
+// Define terminal statuses that belong in the History tab
+$historyStatuses = ['archived', 'missed', 'completed', 'cancelled'];
+
 foreach ($rawActive as $s) {
     $d = $s->data();
-    if (($d['status'] ?? '') === 'archived')
-        continue;
-    $displayActive[] = $s;
-    if (!empty($d['shuttle_id']))
+    $status = $d['status'] ?? '';
+
+    // If it's today but already failed/finished, push to History
+    if (in_array($status, $historyStatuses)) {
+        $displayArchived[] = $s;
+    } else {
+        $displayActive[] = $s;
+    }
+
+    if (!empty($d['shuttle_id'])) {
         $uniqueShuttles[$d['shuttle_id']] = $d['shuttle_id'];
+    }
 }
 
 foreach ($rawArchived as $s) {
     $d = $s->data();
-    if (($d['status'] ?? '') !== 'archived')
-        continue;
-    $displayArchived[] = $s;
-    if (!empty($d['shuttle_id']))
+    $status = $d['status'] ?? '';
+
+    // Only show items in history that are definitively closed
+    if (in_array($status, $historyStatuses)) {
+        $displayArchived[] = $s;
+    }
+
+    if (!empty($d['shuttle_id'])) {
         $uniqueShuttles[$d['shuttle_id']] = $d['shuttle_id'];
+    }
 }
 
 sort($uniqueShuttles);
+
+$pageTitle = 'Schedule Management - CampusPulse';
+$depth = '../../';
+include $depth . 'layout/admin_header.php';
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <title>Schedule Management - CampusPulse</title>
-    <link rel="icon" type="image/x-icon" href="../img/favicon.ico">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap"
-        rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="../../css/style.css">
     <style>
         .badge {
             padding: 4px 8px;
@@ -137,6 +159,11 @@ sort($uniqueShuttles);
         .badge-archived {
             background: #f1f1f1;
             color: #7f8c8d;
+        }
+
+        .badge-missed {
+            background: #fee2e2;
+            color: #dc2626;
         }
 
         .time-range {
@@ -332,9 +359,51 @@ sort($uniqueShuttles);
         /* Force perfect horizontal alignment for the 3 top inputs in the modal */
         .modal-form-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(2, 1fr);
             gap: 20px;
             align-items: start;
+            margin-bottom: 20px;
+        }
+
+        /* Modal Tabs */
+        .modal-tabs {
+            display: flex;
+            border-bottom: 2px solid #edf2f7;
+            margin-bottom: 25px;
+        }
+
+        .modal-tab-btn {
+            padding: 12px 25px;
+            background: none;
+            border: none;
+            font-size: 1rem;
+            font-weight: 600;
+            color: #718096;
+            cursor: pointer;
+            position: relative;
+            outline: none;
+        }
+
+        .modal-tab-btn.active {
+            color: var(--primary-blue);
+        }
+
+        .modal-tab-btn.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: var(--primary-blue);
+        }
+
+        .modal-tab-content {
+            display: none;
+        }
+
+        .modal-tab-content.active {
+            display: block;
         }
 
         .modal-form-grid label {
@@ -463,18 +532,6 @@ sort($uniqueShuttles);
             cursor: not-allowed;
         }
     </style>
-</head>
-
-<body>
-
-    <div class="wrapper">
-        <?php $depth = '../../'; ?>
-        <?php include '../../layout/sidebar.php'; ?>
-
-        <div id="content">
-            <?php include '../../layout/header.php'; ?>
-
-            <div class="main-content">
 
                 <div
                     style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 25px; flex-wrap: wrap; gap: 15px;">
@@ -492,37 +549,45 @@ sort($uniqueShuttles);
                     $err = $_GET['err'] ?? '';
                     $displayText = '';
 
-                    switch ($msg) {
-                        case 'updated':
-                            $displayText = "Schedule updated successfully!";
-                            break;
-                        case 'deleted':
-                            $displayText = "Selected schedules deleted.";
-                            break;
-                        case 'generated':
-                            $displayText = "Schedules auto-generated successfully!";
-                            break;
-                        case 'archived':
-                            $displayText = "History archived successfully.";
-                            break;
-                        default:
-                            $displayText = htmlspecialchars($msg);
-                            break;
+                    // FIX: Only run the MSG switch if $msg actually has text
+                    if ($msg) {
+                        switch ($msg) {
+                            case 'updated':
+                                $displayText = "Schedule updated successfully!";
+                                break;
+                            case 'deleted':
+                                $displayText = "Selected schedules deleted.";
+                                break;
+                            case 'generated':
+                                $displayText = "Schedules auto-generated successfully!";
+                                break;
+                            case 'created':
+                                $displayText = "Single schedule created successfully!";
+                                break;
+                            case 'archived':
+                                $displayText = "History archived successfully.";
+                                break;
+                            default:
+                                $displayText = htmlspecialchars($msg);
+                                break;
+                        }
                     }
-
-                    switch ($err) {
-                        case 'notfound':
-                            $displayText = "Error: Schedule not found.";
-                            break;
-                        case 'failed':
-                            $displayText = "Action failed. Please try again.";
-                            break;
-                        case 'select_none':
-                            $displayText = "Error: No items selected.";
-                            break;
-                        default:
-                            $displayText = htmlspecialchars($err);
-                            break;
+                    // FIX: Only run the ERR switch if $err actually has text
+                    elseif ($err) {
+                        switch ($err) {
+                            case 'notfound':
+                                $displayText = "Error: Schedule not found.";
+                                break;
+                            case 'failed':
+                                $displayText = "Action failed. Please try again.";
+                                break;
+                            case 'select_none':
+                                $displayText = "Error: No items selected.";
+                                break;
+                            default:
+                                $displayText = htmlspecialchars($err);
+                                break;
+                        }
                     }
                     ?>
                     <?php if ($displayText): ?>
@@ -819,9 +884,7 @@ sort($uniqueShuttles);
                     </form>
                 </div>
 
-            </div>
-        </div>
-    </div>
+            
 
     <div class="modal-overlay" id="etaModalOverlay" onclick="closeModal(event, 'etaModalOverlay')">
         <div class="modal-content">
@@ -838,83 +901,162 @@ sort($uniqueShuttles);
                 onclick="document.getElementById('generateModalOverlay').style.display='none'"><i
                     class="fas fa-times"></i></button>
 
-            <h3
-                style="color:var(--primary-blue); margin-top:0; margin-bottom:20px; font-size:1.4rem; padding-bottom:10px; border-bottom:1px solid #eee;">
-                <i class="fas fa-magic" style="margin-right:8px; color:var(--accent-yellow);"></i> Auto-Generate
-                Schedule
-            </h3>
-
-            <div class="modal-form-grid">
-                <div>
-                    <label>Target Date</label>
-                    <input type="date" id="scheduleDate">
-                </div>
-                <div>
-                    <label>Select Zone</label>
-                    <select id="zoneSelect">
-                        <option value="">-- Select Zone --</option>
-                        <?php foreach ($zones as $z): ?>
-                            <option value="<?= $z->id() ?>"><?= htmlspecialchars($z->data()['name']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div>
-                    <label>Select Route</label>
-                    <select id="routeSelect" disabled>
-                        <option value="">-- Select Zone First --</option>
-                    </select>
-                </div>
+            <!-- Tab Buttons -->
+            <div class="modal-tabs">
+                <button type="button" class="modal-tab-btn active" onclick="switchModalTab('tabAutoGenerate', this)">
+                    <i class="fas fa-magic" style="margin-right:8px; color:var(--accent-yellow);"></i> Auto-Generate
+                    Batch
+                </button>
+                <button type="button" class="modal-tab-btn" onclick="switchModalTab('tabSingleSchedule', this)">
+                    <i class="fas fa-plus-circle" style="margin-right:8px; color:#2ecc71;"></i> Create Single
+                </button>
             </div>
 
-            <div style="margin-top:25px; display:grid; grid-template-columns: 1fr 1fr; gap:25px;">
-                <div>
-                    <label style="font-weight:600; display:block; margin-bottom:8px; color:#333;">Assign
-                        Shuttles</label>
-                    <div id="shuttleSelect"
-                        style="border:1px solid #cbd5e0; padding:15px; border-radius:8px; height:150px; overflow-y:auto; background:#f8f9fa;">
-                        <em style="color:#a0aec0; font-size:0.9rem;">Select a zone to load available shuttles...</em>
+            <!-- TAB 1: Auto-Generate Batch -->
+            <div id="tabAutoGenerate" class="modal-tab-content active">
+                <div class="modal-form-grid">
+                    <div>
+                        <label>Target Date</label>
+                        <input type="date" id="scheduleDate">
+                    </div>
+                    <div>
+                        <label>Direction</label>
+                        <select id="directionSelect"
+                            onchange="updateRouteDropdown('zoneSelect', 'directionSelect', 'routeSelect')">
+                            <option value="">-- Select Direction --</option>
+                            <option value="to_campus">To Campus</option>
+                            <option value="from_campus">From Campus</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Select Zone</label>
+                        <select id="zoneSelect"
+                            onchange="updateRouteDropdown('zoneSelect', 'directionSelect', 'routeSelect'); loadShuttles(this.value, 'shuttleSelect')">
+                            <option value="">-- Select Zone --</option>
+                            <?php foreach ($zones as $z): ?>
+                                <option value="<?= $z->id() ?>"><?= htmlspecialchars($z->data()['name']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Select Route</label>
+                        <select id="routeSelect" disabled>
+                            <option value="">-- Filter Zone & Direction --</option>
+                        </select>
                     </div>
                 </div>
-                <div>
-                    <label style="font-weight:600; display:block; margin-bottom:8px; color:#333;">Settings</label>
-                    <div style="background:#f8f9fa; padding:15px; border-radius:8px; border:1px solid #cbd5e0;">
-                        <label style="display:flex; align-items:center; gap:8px; margin-bottom:12px; cursor:pointer;">
-                            <input type="checkbox" name="peak[]" value="morning" checked>
-                            <span style="font-size:0.95rem;">Morning Peak (7:00 AM - 10:00 AM)</span>
-                        </label>
-                        <label style="display:flex; align-items:center; gap:8px; margin-bottom:15px; cursor:pointer;">
-                            <input type="checkbox" name="peak[]" value="evening" checked>
-                            <span style="font-size:0.95rem;">Evening Peak (5:00 PM - 7:30 PM)</span>
-                        </label>
 
-                        <div
-                            style="display:flex; align-items:center; gap:10px; border-top: 1px solid #e2e8f0; padding-top:15px;">
-                            <span style="font-weight:600; font-size:0.9rem; color:#4a5568;">Dispatch Interval:</span>
-                            <select id="interval"
-                                style="width:90px; padding:6px 10px; border:1px solid #cbd5e0; border-radius:6px; outline:none; font-family:'Poppins', sans-serif;">
-                                <option value="10">10</option>
-                                <option value="15" selected>15</option>
-                                <option value="20">20</option>
-                                <option value="30">30</option>
-                            </select>
-                            <span style="font-size:0.85rem; color:#718096;">mins</span>
+                <div style="margin-top:25px; display:grid; grid-template-columns: 1fr 1fr; gap:25px;">
+                    <div>
+                        <label style="font-weight:600; display:block; margin-bottom:8px; color:#333;">Assign
+                            Shuttles</label>
+                        <div id="shuttleSelect"
+                            style="border:1px solid #cbd5e0; padding:15px; border-radius:8px; height:150px; overflow-y:auto; background:#f8f9fa;">
+                            <em style="color:#a0aec0; font-size:0.9rem;">Select a zone to load available
+                                shuttles...</em>
+                        </div>
+                    </div>
+                    <div>
+                        <label style="font-weight:600; display:block; margin-bottom:8px; color:#333;">Settings</label>
+                        <div style="background:#f8f9fa; padding:15px; border-radius:8px; border:1px solid #cbd5e0;">
+                            <label
+                                style="display:flex; align-items:center; gap:8px; margin-bottom:12px; cursor:pointer;">
+                                <input type="checkbox" name="peak[]" value="morning" checked>
+                                <span style="font-size:0.95rem;">Morning Peak (7:00 AM - 10:00 AM)</span>
+                            </label>
+                            <label
+                                style="display:flex; align-items:center; gap:8px; margin-bottom:15px; cursor:pointer;">
+                                <input type="checkbox" name="peak[]" value="evening" checked>
+                                <span style="font-size:0.95rem;">Evening Peak (5:00 PM - 7:30 PM)</span>
+                            </label>
+
+                            <div
+                                style="display:flex; align-items:center; gap:10px; border-top: 1px solid #e2e8f0; padding-top:15px;">
+                                <span style="font-weight:600; font-size:0.9rem; color:#4a5568;">Dispatch
+                                    Interval:</span>
+                                <select id="interval"
+                                    style="width:90px; padding:6px 10px; border:1px solid #cbd5e0; border-radius:6px; outline:none; font-family:'Poppins', sans-serif;">
+                                    <option value="10">10</option>
+                                    <option value="15" selected>15</option>
+                                    <option value="20">20</option>
+                                    <option value="30">30</option>
+                                </select>
+                                <span style="font-size:0.85rem; color:#718096;">mins</span>
+                            </div>
                         </div>
                     </div>
                 </div>
+
+                <div
+                    style="margin-top:30px; padding-top:20px; border-top: 1px solid #eee; display:flex; justify-content:space-between; align-items:center;">
+                    <span id="resultMsg" style="font-weight:600; color:#333;"></span>
+                    <button onclick="generateSchedule()" class="btn btn-primary"
+                        style="padding:12px 25px; font-size:1rem; border-radius:8px;">
+                        <i class="fas fa-cogs" style="margin-right:8px;"></i> Start Generation
+                    </button>
+                </div>
             </div>
 
-            <div
-                style="margin-top:30px; padding-top:20px; border-top: 1px solid #eee; display:flex; justify-content:space-between; align-items:center;">
-                <span id="resultMsg" style="font-weight:600; color:#333;"></span>
-                <button onclick="generateSchedule()" class="btn btn-primary"
-                    style="padding:12px 25px; font-size:1rem; border-radius:8px;">
-                    <i class="fas fa-cogs" style="margin-right:8px;"></i> Start Generation
-                </button>
+            <!-- TAB 2: Create Single Schedule -->
+            <div id="tabSingleSchedule" class="modal-tab-content">
+                <div class="modal-form-grid">
+                    <div>
+                        <label>Date</label>
+                        <input type="date" id="singleDate">
+                    </div>
+                    <div>
+                        <label>Departure Time</label>
+                        <input type="time" id="singleTime">
+                    </div>
+                    <div>
+                        <label>Direction</label>
+                        <select id="singleDir" onchange="updateRouteDropdown('singleZone', 'singleDir', 'singleRoute')">
+                            <option value="">-- Select Direction --</option>
+                            <option value="to_campus">To Campus</option>
+                            <option value="from_campus">From Campus</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Select Zone</label>
+                        <select id="singleZone"
+                            onchange="updateRouteDropdown('singleZone', 'singleDir', 'singleRoute'); loadShuttles(this.value, 'singleShuttle')">
+                            <option value="">-- Select Zone --</option>
+                            <?php foreach ($zones as $z): ?>
+                                <option value="<?= $z->id() ?>"><?= htmlspecialchars($z->data()['name']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Select Route</label>
+                        <select id="singleRoute" disabled>
+                            <option value="">-- Filter Zone & Direction --</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Assign Shuttle</label>
+                        <select id="singleShuttle" disabled>
+                            <option value="">-- Select Zone First --</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div
+                    style="margin-top:30px; padding-top:20px; border-top: 1px solid #eee; display:flex; justify-content:space-between; align-items:center;">
+                    <span id="singleResultMsg" style="font-weight:600; color:#333;"></span>
+                    <button onclick="createSingleSchedule()" class="btn btn-primary"
+                        style="background:var(--success); border-color:var(--success); padding:12px 25px; font-size:1rem; border-radius:8px;">
+                        <i class="fas fa-check" style="margin-right:8px;"></i> Create Schedule
+                    </button>
+                </div>
             </div>
+
         </div>
     </div>
 
-    <script src="schedule_management.js"></script>
+    <script>
+        const routesData = <?= json_encode($routesMap) ?>;
+    </script>
+    <script src="schedule_management.js?v=<?= time() ?>"></script>
 
     <script>
         // --- CHECKBOX & DELETE BUTTON LOGIC ---
@@ -1088,6 +1230,6 @@ sort($uniqueShuttles);
             renderTable(tableId);
         }
     </script>
-</body>
 
-</html>
+<?php include $depth . 'layout/admin_footer.php'; ?>
+

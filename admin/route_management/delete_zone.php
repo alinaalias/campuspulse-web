@@ -15,12 +15,11 @@ if (!$id) {
 }
 
 try {
+    // PERMANENT DELETE: Wipes the document from Firestore completely
     $firestore->database()
         ->collection('Zones')
         ->document($id)
-        ->update([
-            ['path' => 'status', 'value' => 'inactive']
-        ]);
+        ->delete();
 
     header('Location: routes_management.php?msg=zone_deleted#section-zones');
     exit();

@@ -10,10 +10,16 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
 
 $id = $_POST['id'] ?? '';
 $targetStatus = $_POST['status'] ?? ''; // This receives the NEW desired status
+$reason = $_POST['reason'] ?? 'No reason provided';
 
 if (!$id || !$targetStatus) {
     echo json_encode(['success' => false, 'message' => 'Invalid input']);
     exit();
+}
+
+// Integrity Check: Graduated students MUST be inactive
+if ($reason === 'Graduated') {
+    $targetStatus = 'inactive';
 }
 
 // Ensure status is valid
@@ -23,13 +29,18 @@ if (!in_array($targetStatus, $validStatuses)) {
     exit();
 }
 
+$adminName = $_SESSION['full_name'] ?? 'Admin';
+
 try {
     $firestore->database()
         ->collection('Students')
         ->document($id)
         ->update([
             ['path' => 'status', 'value' => $targetStatus],
-            ['path' => 'updated_at', 'value' => date('Y-m-d H:i:s')]
+            ['path' => 'updated_at', 'value' => date('Y-m-d H:i:s')],
+            ['path' => 'status_update_reason', 'value' => $reason],
+            ['path' => 'status_update_at', 'value' => date('c')],
+            ['path' => 'status_update_admin', 'value' => $adminName]
         ]);
 
     echo json_encode(['success' => true, 'new_status' => $targetStatus]);

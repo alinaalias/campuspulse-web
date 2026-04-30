@@ -8,12 +8,18 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
 }
 
 $id = $_GET['id'] ?? '';
-if (!$id) { header('Location: routes_management.php?err=missing_id'); exit(); }
+if (!$id) {
+    header('Location: routes_management.php?err=missing_id');
+    exit();
+}
 
 $ref = $firestore->database()->collection('Zones')->document($id);
 $snap = $ref->snapshot();
 
-if (!$snap->exists()) { header('Location: routes_management.php?err=not_found'); exit(); }
+if (!$snap->exists()) {
+    header('Location: routes_management.php?err=not_found');
+    exit();
+}
 $zone = $snap->data();
 
 $error = '';
@@ -39,57 +45,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = "Zone name is required.";
     }
 }
+
+$pageTitle = "Edit Zone";
+$depth = '../../';
+include $depth . 'layout/admin_header.php';
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Edit Zone - CampusPulse</title>
-    <link rel="icon" type="image/x-icon" href="../img/favicon.ico">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="../../css/style.css">
-</head>
-<body>
-<div class="wrapper">
-    <?php $depth = '../../'; ?>
-    <?php include '../../layout/sidebar.php'; ?>
-    <div id="content">
-        <?php include '../../layout/header.php'; ?>
-        <div class="main-content">
-            <div class="card" style="max-width: 500px; margin: 0 auto;">
-                <h2 style="color:var(--primary-blue);">Edit Zone</h2>
-                <p style="color:#777; margin-bottom:20px;">ID: <strong><?= htmlspecialchars($zone['zone_id']) ?></strong></p>
 
-                <?php if ($error): ?><div class="alert-error"><?= htmlspecialchars($error) ?></div><?php endif; ?>
+<div class="card" style="max-width: 500px; margin: 0 auto;">
+    <h2 style="color:var(--primary-blue);">Edit Zone</h2>
+    <p style="color:#777; margin-bottom:20px;">ID: <strong><?= htmlspecialchars($zone['zone_id']) ?></strong></p>
 
-                <form method="POST">
-                    <div style="margin-bottom:15px;">
-                        <label style="font-weight:600;">Zone Name</label>
-                        <input type="text" name="name" class="form-control" value="<?= htmlspecialchars($zone['name']) ?>" required>
-                    </div>
+    <?php if ($error): ?>
+        <div class="alert-error"><?= htmlspecialchars($error) ?></div><?php endif; ?>
 
-                    <div style="margin-bottom:15px;">
-                        <label style="font-weight:600;">Description</label>
-                        <textarea name="description" class="form-control" rows="3"><?= htmlspecialchars($zone['description'] ?? '') ?></textarea>
-                    </div>
-
-                    <div style="margin-bottom:25px;">
-                        <label style="font-weight:600;">Status</label>
-                        <select name="status" class="form-control">
-                            <option value="active" <?= $zone['status']==='active'?'selected':'' ?>>Active</option>
-                            <option value="inactive" <?= $zone['status']==='inactive'?'selected':'' ?>>Inactive</option>
-                        </select>
-                    </div>
-
-                    <div style="display:flex; justify-content:space-between;">
-                        <a href="routes_management.php#section-zones" class="btn" style="background:#eee; color:#333;">Cancel</a>
-                        <button type="submit" class="btn btn-primary">Update Zone</button>
-                    </div>
-                </form>
-            </div>
+    <form method="POST">
+        <div style="margin-bottom:15px;">
+            <label style="font-weight:600;">Zone Name</label>
+            <input type="text" name="name" class="form-control" value="<?= htmlspecialchars($zone['name']) ?>" required>
         </div>
-    </div>
+
+        <div style="margin-bottom:15px;">
+            <label style="font-weight:600;">Description</label>
+            <textarea name="description" class="form-control"
+                rows="3"><?= htmlspecialchars($zone['description'] ?? '') ?></textarea>
+        </div>
+
+        <div style="margin-bottom:25px;">
+            <label style="font-weight:600;">Status</label>
+            <select name="status" class="form-control">
+                <option value="active" <?= $zone['status'] === 'active' ? 'selected' : '' ?>>Active</option>
+                <option value="inactive" <?= $zone['status'] === 'inactive' ? 'selected' : '' ?>>Inactive</option>
+            </select>
+        </div>
+
+        <div style="display:flex; justify-content:space-between;">
+            <a href="routes_management.php#section-zones" class="btn" style="background:#eee; color:#333;">Cancel</a>
+            <button type="submit" class="btn btn-primary">Update Zone</button>
+        </div>
+    </form>
 </div>
-</body>
-</html>
+<?php include $depth . 'layout/admin_footer.php'; ?>

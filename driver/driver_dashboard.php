@@ -15,11 +15,24 @@ $driverId = $_SESSION['user_id'];
 $driverSnap = $firestore->database()->collection('Staffs')->document($driverId)->snapshot();
 $driverData = $driverSnap->data();
 
-// GATEKEEPER - Admin Status Check
-if (($driverData['status'] ?? '') !== 'active') {
-    // If admin suspended them, log them out or show error
-    die("Your account is currently inactive. Please contact the administrator.");
+// GATEKEEPER - Admin Status Check & Compliance
+$todayDate = new DateTime('today');
+$licExp = $driverData['license_expiry'] ?? '';
+$psvExp = $driverData['psv_expiry'] ?? '';
+$licDays = !empty($licExp) ? (int) $todayDate->diff(new DateTime($licExp))->format('%r%a') : null;
+$psvDays = !empty($psvExp) ? (int) $todayDate->diff(new DateTime($psvExp))->format('%r%a') : null;
+$isExpired = (($licDays !== null && $licDays < 0) || ($psvDays !== null && $psvDays < 0));
+$status = $driverData['status'] ?? '';
+
+if ($status === 'suspended' || $status === 'inactive' || $status === 'pending_review' || $isExpired) {
+    $_SESSION['requires_compliance_update'] = true;
+    header('Location: driver_profile.php');
+    exit();
+} else {
+    unset($_SESSION['requires_compliance_update']);
 }
+
+
 
 // NEW: Check Duty Status for the Shift
 $isOnline = ($driverData['duty_status'] ?? 'offline') === 'online';
@@ -85,32 +98,7 @@ if ($isOnline) {
     }
 
     if (!$onDemandJob) {
-        $pingQuery = $firestore->database()->collection('Bookings')
-            ->where('candidate_driver_id', '=', $driverId)
-            ->where('type', '=', 'ondemand')
-            ->where('status', '=', 'searching')
-            ->limit(1)->documents();
-
-        foreach ($pingQuery as $doc) {
-            $onDemandJob = $doc->data();
-            $onDemandJob['id'] = $doc->id();
-            $odType = 'pinging';
-
-            $pId = $onDemandJob['pickup_stop_id'] ?? '';
-            $dId = $onDemandJob['dropoff_stop_id'] ?? '';
-
-            $pSnap = $firestore->database()->collection('Stops')->document($pId)->snapshot();
-            $dSnap = $firestore->database()->collection('Stops')->document($dId)->snapshot();
-
-            $onDemandJob['pickup_location'] = $pSnap->exists() ? ($pSnap->data()['name'] ?? $pId) : 'Current Location';
-            $onDemandJob['destination_name'] = $dSnap->exists() ? ($dSnap->data()['name'] ?? $dId) : 'Destination';
-
-            break;
-        }
-
-        if (!$onDemandJob) {
-            $odType = 'idle';
-        }
+        $odType = 'idle';
     }
 } else {
     $odType = 'offline';
@@ -139,7 +127,8 @@ foreach ($schedules as $s) {
 
     $jobDateTimeString = $temp['date'] . ' ' . $temp['departure_time'];
     $jobTimestamp = strtotime($jobDateTimeString);
-    $isPast = ($jobTimestamp < $currentTimestamp);
+    // 15-minute grace buffer: treat jobs as "past" only after 15 mins have elapsed
+    $isPast = ($jobTimestamp < ($currentTimestamp - 900));
 
     if ($sStatus !== 'active' && $isPast)
         continue;
@@ -164,12 +153,12 @@ if ($scheduledJob) {
         if (!empty($stops))
             $destId = end($stops);
     }
-    
+
     if (!empty($destId)) {
         $destSnap = $firestore->database()->collection('Stops')->document($destId)->snapshot();
         $dData = $destSnap->exists() ? $destSnap->data() : [];
         $destName = $dData['stop_name'] ?? $dData['name'] ?? $destId;
-        
+
         if (!empty($etas) && isset($etas[$destId])) {
             $destName .= ' (' . $etas[$destId] . ')';
         }
@@ -232,6 +221,30 @@ foreach ($alertsQuery as $doc) {
         $newAlertsCount++;
     }
 }
+
+// Check personal unread notifications
+$notificationsQuery = $firestore->database()->collection('Notifications')
+    ->where('user_id', '=', $driverId)
+    ->where('is_read', '=', false)
+    ->documents();
+
+foreach ($notificationsQuery as $doc) {
+    // Only count if it was published after they last read their alerts page
+    // Wait, personal notifications get cleared (is_read=true) when read, so they don't even exist here if read.
+    $newAlertsCount++;
+}
+
+// Add warning counts for upcoming expirations (<= 30 days) to keep badge aggressive
+if ($licDays !== null && $licDays >= 0 && $licDays <= 30) {
+    if ($currentTimestamp > $lastReadTime) { // Re-trigger count if unread
+        $newAlertsCount++;
+    }
+}
+if ($psvDays !== null && $psvDays >= 0 && $psvDays <= 30) {
+    if ($currentTimestamp > $lastReadTime) {
+        $newAlertsCount++;
+    }
+}
 ?>
 
 <!DOCTYPE html>
@@ -248,67 +261,373 @@ foreach ($alertsQuery as $doc) {
     <link rel="stylesheet" href="../css/style.css">
 
     <style>
-        .duty-toggle-container {
-            background:
-                <?= $isOnline ? 'var(--primary-blue)' : '#444' ?>
-            ;
-            padding: 30px 20px 60px 20px;
+        body.driver-body {
+            background-color: #f4f6f9;
+            font-family: 'Poppins', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* HEADER POLISH */
+        .driver-header {
+            padding: 30px 20px 80px 20px;
+            background: linear-gradient(135deg, var(--primary-blue), #0d3c78);
             color: white;
-            text-align: center;
-            transition: background 0.3s ease;
             border-bottom-left-radius: 30px;
             border-bottom-right-radius: 30px;
+            position: relative;
+            z-index: 10;
+            box-shadow: 0 10px 30px rgba(16, 76, 151, 0.2);
         }
 
-        .toggle-switch-large {
-            display: inline-flex;
+        .status-pill {
+            transition: all 0.3s ease;
+            user-select: none;
+        }
+
+        .status-pill:active {
+            transform: scale(0.95);
+        }
+
+        /* CONTAINER LAYOUT */
+        .driver-container {
+            margin-top: -50px;
+            padding: 0 20px 100px 20px;
+            position: relative;
+            z-index: 20;
+        }
+
+        .dashboard-section {
+            margin-bottom: 25px;
+        }
+
+        .section-header {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: #4a5568;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* NATIVE APP STYLE CARDS */
+        .app-card {
+            background: white;
+            border-radius: 20px;
+            padding: 20px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.04);
+            border: 1px solid rgba(0, 0, 0, 0.02);
+            margin-bottom: 20px;
+        }
+
+        /* VEHICLE INFO CARD */
+        .vehicle-card {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 18px 20px;
+        }
+
+        .v-label {
+            font-size: 0.75rem;
+            color: #a0aec0;
+            text-transform: uppercase;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .v-value {
+            font-weight: 700;
+            color: var(--primary-blue);
+            font-size: 1.1rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .v-divider {
+            width: 1px;
+            height: 40px;
+            background: #edf2f7;
+            margin: 0 15px;
+        }
+
+        /* ON-DEMAND CARDS */
+        .status-card {
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .pulse-icon {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.8rem;
+            margin: 0 auto 15px;
+            position: relative;
+        }
+
+        .pulse-icon.offline {
+            background: #f1f3f5;
+            color: #adb5bd;
+        }
+
+        .pulse-icon.idle {
+            background: rgba(52, 152, 219, 0.1);
+            color: var(--primary-blue);
+        }
+
+        .pulse-icon.idle::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            border: 2px solid var(--primary-blue);
+            animation: ripple 2s infinite ease-out;
+        }
+
+        @keyframes ripple {
+            0% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(1.5);
+                opacity: 0;
+            }
+        }
+
+        /* PINGING / JOB CARD */
+        .job-card {
+            border: 2px solid transparent;
+            overflow: hidden;
+            padding: 0;
+        }
+
+        .job-card.pinging {
+            border-color: #2ecc71;
+            box-shadow: 0 10px 30px rgba(46, 204, 113, 0.2);
+            animation: cardPulse 1.5s infinite alternate;
+        }
+
+        @keyframes cardPulse {
+            from {
+                box-shadow: 0 10px 30px rgba(46, 204, 113, 0.2);
+            }
+
+            to {
+                box-shadow: 0 10px 40px rgba(46, 204, 113, 0.5);
+            }
+        }
+
+        .job-header {
+            padding: 15px 20px;
+            display: flex;
             align-items: center;
             gap: 15px;
-            background: rgba(255, 255, 255, 0.1);
-            padding: 10px 20px;
-            border-radius: 50px;
-            cursor: pointer;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
         }
 
-        /* FAB and other styles kept from your original CSS */
+        .job-header.pinging-bg {
+            background: #e8f8f5;
+        }
+
+        .job-header.active-bg {
+            background: #fff8e1;
+        }
+
+        .icon-box-large {
+            width: 45px;
+            height: 45px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            background: white;
+        }
+
+        .icon-box-large.green {
+            color: #27ae60;
+            box-shadow: 0 4px 10px rgba(39, 174, 96, 0.1);
+        }
+
+        .icon-box-large.yellow {
+            color: #f39c12;
+            box-shadow: 0 4px 10px rgba(243, 156, 18, 0.1);
+        }
+
+        .job-title {
+            margin: 0;
+            font-size: 1.1rem;
+            font-weight: 700;
+        }
+
+        .job-subtitle {
+            margin: 0;
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: #555;
+        }
+
+        .route-path {
+            padding: 20px;
+            background: white;
+        }
+
+        .stop-point {
+            display: flex;
+            align-items: flex-start;
+            gap: 15px;
+            margin-bottom: 15px;
+            position: relative;
+        }
+
+        .stop-point:last-child {
+            margin-bottom: 0;
+        }
+
+        .stop-point:first-child::after {
+            content: '';
+            position: absolute;
+            left: 7px;
+            top: 20px;
+            bottom: -15px;
+            width: 2px;
+            background: #e2e8f0;
+            border-radius: 2px;
+        }
+
+        .stop-dot {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: 0 0 0 1px #cbd5e0;
+            margin-top: 3px;
+            position: relative;
+            z-index: 2;
+        }
+
+        .dot-start {
+            background: #2ecc71;
+            box-shadow: 0 0 0 1px #2ecc71;
+        }
+
+        .dot-end {
+            background: #e74c3c;
+            box-shadow: 0 0 0 1px #e74c3c;
+        }
+
+        .stop-info {
+            flex: 1;
+        }
+
+        .stop-label {
+            font-size: 0.75rem;
+            color: #a0aec0;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-bottom: 2px;
+        }
+
+        .stop-name {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: #2d3748;
+            line-height: 1.2;
+        }
+
+        /* MASSIVE ACTION BUTTONS */
+        .action-area {
+            padding: 20px;
+            background: #fafafa;
+            border-top: 1px solid #edf2f7;
+        }
+
+        .btn-massive {
+            width: 100%;
+            padding: 18px;
+            border-radius: 14px;
+            font-size: 1.15rem;
+            font-weight: 700;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            transition: all 0.2s;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.1);
+            color: white;
+            text-decoration: none;
+        }
+
+        .btn-massive:active {
+            transform: scale(0.96);
+        }
+
+        .btn-massive.green {
+            background: #27ae60;
+        }
+
+        .btn-massive.blue {
+            background: var(--primary-blue);
+        }
+
+        .btn-massive.yellow {
+            background: #f39c12;
+        }
+
+        .btn-massive.dark {
+            background: #2d3748;
+        }
+
+
+
+        /* FAB OVERRIDES */
         .fab-report {
             position: fixed;
             bottom: 90px;
             right: 20px;
-            background: #dc3545;
-            color: white;
+            background: white;
+            color: #e74c3c;
             border: none;
             border-radius: 50px;
             padding: 15px 20px;
             font-size: 1rem;
-            font-weight: 600;
-            box-shadow: 0 4px 15px rgba(220, 53, 69, 0.4);
-            cursor: grab;
+            font-weight: 700;
+            box-shadow: 0 10px 25px rgba(220, 53, 69, 0.25);
+            cursor: pointer;
             z-index: 999;
             display: flex;
             align-items: center;
             gap: 8px;
             transition: transform 0.2s;
-            touch-action: none;
         }
 
         .fab-report:active {
-            cursor: grabbing;
             transform: scale(0.95);
         }
 
+        /* BOTTOM SHEET FIXES */
         .report-overlay {
             position: fixed;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.6);
+            background: rgba(0, 0, 0, 0.5);
             z-index: 1000;
             opacity: 0;
             visibility: hidden;
-            transition: 0.3s ease;
+            transition: 0.3s;
+            backdrop-filter: blur(2px);
         }
 
         .report-overlay.active {
@@ -321,11 +640,11 @@ foreach ($alertsQuery as $doc) {
             bottom: -100%;
             left: 0;
             width: 100%;
-            background: #f8f9fa;
-            border-top-left-radius: 24px;
-            border-top-right-radius: 24px;
-            box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.15);
-            padding: 15px 20px 40px;
+            background: white;
+            border-top-left-radius: 30px;
+            border-top-right-radius: 30px;
+            box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.1);
+            padding: 15px 25px 40px;
             z-index: 1001;
             transition: bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
@@ -335,270 +654,197 @@ foreach ($alertsQuery as $doc) {
         }
 
         .sheet-drag-handle {
-            width: 40px;
-            height: 5px;
-            background: #dee2e6;
-            border-radius: 5px;
-            margin: 0 auto 20px;
-        }
-
-        .location-card {
-            background: white;
-            border: 1px solid #eee;
-            padding: 12px 15px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-size: 0.85rem;
-            color: #555;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.02);
+            width: 50px;
+            height: 6px;
+            background: #e2e8f0;
+            border-radius: 6px;
+            margin: 0 auto 25px;
         }
 
         .report-btn {
-            background: white;
+            background: #f8f9fa;
             border: 2px solid transparent;
             padding: 20px 10px;
-            border-radius: 16px;
+            border-radius: 20px;
             text-align: center;
             cursor: pointer;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
+            transition: 0.2s;
             display: flex;
             flex-direction: column;
             align-items: center;
             gap: 12px;
             width: 100%;
             font-family: inherit;
+            box-shadow: none;
         }
 
         .report-btn:active {
             transform: scale(0.95);
-            border-color: #dee2e6;
+            background: #edf2f7;
         }
 
         .report-btn .icon-circle {
-            width: 55px;
-            height: 55px;
+            width: 60px;
+            height: 60px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.5rem;
-        }
-
-        .btn-emergency {
-            color: #333;
-            font-weight: 600;
-        }
-
-        .btn-emergency .icon-circle {
-            background: #ffebee;
-            color: #dc3545;
-        }
-
-        .btn-warning {
-            color: #333;
-            font-weight: 600;
-        }
-
-        .btn-warning .icon-circle {
-            background: #fff8e1;
-            color: #f39c12;
+            font-size: 1.6rem;
         }
     </style>
 </head>
 
-<body class="driver-body" style="background-color: #f4f6f9;">
+<body class="driver-body">
 
-    <div class="driver-header" style="padding-bottom: 60px;">
+    <div id="pushPrompt"
+        style="display:none; background: #34495e; color: white; padding: 15px; text-align: center; z-index: 9999; position: relative;">
+        <span style="margin-right: 15px; font-size: 0.9rem;">Enable Push Notifications to receive real-time
+            updates.</span>
+        <button onclick="requestPushPermissions()"
+            style="background:#2ecc71; color:white; border:none; padding:6px 12px; border-radius:6px; font-weight:600; cursor:pointer;">Enable</button>
+    </div>
+
+    <div class="driver-header">
         <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-
             <div>
-                <div style="font-size:0.85rem; opacity:0.8; font-weight:300;">Welcome back,</div>
-                <div style="font-size:1.2rem; font-weight:600;">
+                <div style="font-size:0.85rem; opacity:0.85; font-weight:400; margin-bottom:2px;">Welcome back,</div>
+                <div style="font-size:1.4rem; font-weight:700; line-height:1;">
                     <?= htmlspecialchars(explode(' ', trim($driverData['full_name']))[0]) ?>
                 </div>
             </div>
 
-            <div style="display: flex; align-items: center; gap: 15px;">
-
-                <a href="driver_alerts.php"
-                    style="color: white; position: relative; text-decoration: none; margin-right: 10px;">
-                    <i class="fas fa-bell" style="font-size: 1.3rem;"></i>
-
+            <div style="display: flex; align-items: center; gap: 18px;">
+                <a href="driver_alerts.php" style="color: white; position: relative; text-decoration: none;">
+                    <i class="fas fa-bell" style="font-size: 1.4rem;"></i>
                     <?php if ($newAlertsCount > 0): ?>
                         <span
-                            style="position: absolute; top: -6px; right: -8px; background: #e74c3c; color: white; font-size: 0.65rem; font-weight: bold; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 2px solid var(--primary-blue); box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                            style="position: absolute; top: -6px; right: -8px; background: #e74c3c; color: white; font-size: 0.65rem; font-weight: 700; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 2px solid var(--primary-blue);">
                             <?= $newAlertsCount > 9 ? '9+' : $newAlertsCount ?>
                         </span>
                     <?php endif; ?>
                 </a>
 
                 <div class="status-pill" onclick="toggleStatus()"
-                    style="background: rgba(255,255,255,0.15); padding: 6px 12px; border-radius: 20px; display: flex; align-items: center; gap: 8px; cursor: pointer; border: 1px solid rgba(255,255,255,0.2);">
-
-                    <div id="statusDot" class="status-dot"
+                    style="background: <?= $isOnline ? 'rgba(46, 204, 113, 0.15)' : 'rgba(255,255,255,0.15)' ?>; padding: 8px 16px; border-radius: 30px; display: flex; align-items: center; gap: 10px; cursor: pointer; border: 1px solid <?= $isOnline ? 'rgba(46, 204, 113, 0.3)' : 'rgba(255,255,255,0.2)' ?>;">
+                    <div id="statusDot"
                         style="width: 10px; height: 10px; border-radius: 50%; background: <?= $isOnline ? '#2ecc71' : '#bdc3c7' ?>; box-shadow: 0 0 8px <?= $isOnline ? '#2ecc71' : 'transparent' ?>;">
                     </div>
-
-                    <span id="statusText" style="font-size:0.85rem; font-weight:600; color: white;">
-                        <?= $isOnline ? 'Online' : 'Offline' ?>
+                    <span id="statusText"
+                        style="font-size:0.9rem; font-weight:700; color: <?= $isOnline ? '#2ecc71' : 'white' ?>;">
+                        <?= $isOnline ? 'ONLINE' : 'OFFLINE' ?>
                     </span>
                 </div>
-
             </div>
         </div>
     </div>
 
-    <div class="driver-container" style="margin-top: -30px; padding-bottom: 100px;">
+    <div class="driver-container">
 
-        <div class="driver-card"
-            style="background: white; border-left: 4px solid var(--primary-blue); padding: 15px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <div>
-                <div style="font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Vehicle
-                </div>
-                <div style="font-weight: 600; color: var(--primary-blue); font-size: 1rem;">
-                    <i class="fas fa-bus"></i> <?= htmlspecialchars($assignedShuttleInfo) ?>
+        <div class="app-card vehicle-card">
+            <div style="flex: 1;">
+                <div class="v-label">Vehicle ID</div>
+                <div class="v-value"><i class="fas fa-shuttle-van"></i> <?= htmlspecialchars($assignedShuttleInfo) ?>
                 </div>
             </div>
-            <div style="text-align: right;">
-                <div style="font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">
-                    Operating Zone</div>
-                <div style="font-weight: 600; color: var(--primary-blue); font-size: 1rem;">
+            <div class="v-divider"></div>
+            <div style="flex: 1; text-align: right;">
+                <div class="v-label">Operating Zone</div>
+                <div class="v-value" style="justify-content: flex-end; color: #2d3748;">
                     <?= htmlspecialchars($assignedZoneInfo) ?>
                 </div>
             </div>
         </div>
 
         <div class="dashboard-section">
-            <div class="section-header" style="text-shadow: 0 1px 2px rgba(0,0,0,0.1);">
-                <span><i class="fas fa-satellite-dish" style="margin-right: 8px;"></i>On-Demand Radar</span>
+            <div class="section-header">
+                <span><i class="fas fa-satellite-dish" style="margin-right: 8px; color:var(--primary-blue);"></i>
+                    On-Demand Radar</span>
             </div>
 
-            <?php if ($odType === 'offline'): ?>
-                <div class="status-card" style="opacity: 0.7;">
-                    <div class="pulse-icon" style="background:#f1f1f1; color:#aaa;"><i class="fas fa-moon"></i></div>
-                    <h3 style="margin:0 0 5px; font-size:1.1rem;">Offline Mode</h3>
-                    <p style="color:#888; font-size:0.9rem; margin:0;">Toggle status above to receive jobs.</p>
+            <?php if ($odType === 'offline' || $odType === 'idle'): ?>
+                <!-- Phase 1: IDs given and initially set based on PHP state -->
+                <div id="offline-card" class="app-card status-card" style="display: <?= $odType === 'offline' ? 'block' : 'none' ?>;">
+                    <div class="pulse-icon offline"><i class="fas fa-moon"></i></div>
+                    <h3 style="margin:0 0 5px; font-size:1.2rem; font-weight:700; color:#2d3748;">Offline Mode</h3>
+                    <p style="color:#718096; font-size:0.9rem; margin:0;">Go Online above to receive incoming ride requests.
+                    </p>
                 </div>
-            <?php elseif ($odType === 'idle'): ?>
-                <div class="status-card">
-                    <div class="pulse-icon active"><i class="fas fa-radar"></i></div>
-                    <h3 style="margin:0 0 5px; font-size:1.1rem; color:var(--primary-blue);">Scanning Area...</h3>
-                    <p style="color:#888; font-size:0.9rem; margin:0;">Waiting for student requests.</p>
+
+                <div id="scanning-card" class="app-card status-card" style="display: <?= $odType === 'idle' ? 'block' : 'none' ?>;">
+                    <div class="pulse-icon idle"><i class="fas fa-radar"></i></div>
+                    <h3 style="margin:0 0 5px; font-size:1.2rem; font-weight:700; color:var(--primary-blue);">Scanning
+                        Area...</h3>
+                    <p style="color:#718096; font-size:0.9rem; margin:0;">You are online. Waiting for student requests in
+                        your zone.</p>
                 </div>
-            <?php elseif ($odType === 'pinging'): ?>
-                <div class="schedule-ticket" id="pinging-ticket-ui" style="border: 2px solid #2ecc71; animation: pulseGlow 1.5s infinite alternate;">
-                    <style>
-                        @keyframes pulseGlow {
-                            from { box-shadow: 0 0 10px rgba(46, 204, 113, 0.4); }
-                            to { box-shadow: 0 0 25px rgba(46, 204, 113, 0.8); }
-                        }
-                    </style>
-                    <div class="ticket-top" style="background:#e8f8f5;">
-                        <div class="ticket-time-box" style="background:white; color:#2ecc71;">
-                            <div><i class="fas fa-bell"></i></div>
-                        </div>
-                        <div class="ticket-details">
-                            <h4 style="color:#27ae60;">NEW RIDE REQUEST!</h4>
-                            <p style="color:#555; font-weight:600;">Nearest Passenger Match</p>
-                        </div>
-                    </div>
-                    
-                    <div style="padding: 15px; background: white; border-bottom: 1px solid #eee;">
-                        <div style="font-size:0.9rem; margin-bottom:8px;">
-                            <span style="color:green;">●</span> <b>Pickup:</b> <?= htmlspecialchars($onDemandJob['pickup_location']) ?>
-                        </div>
-                        <div style="font-size:0.9rem;">
-                            <span style="color:red;">📍</span> <b>Dropoff:</b> <?= htmlspecialchars($onDemandJob['destination_name']) ?>
-                        </div>
-                    </div>
-                    
-                    <div class="ticket-action" style="background: white; padding: 15px;">
-                        <button onclick="acceptOnDemandJob('<?= $onDemandJob['id'] ?>', this)" class="btn-save" style="width:100%; background:#2ecc71; padding: 12px; font-size: 1.1rem;">
-                            ACCEPT JOB
-                        </button>
-                    </div>
-                </div>
-                
+
+                <!-- Phase 2: Container for dynamic JS injection of searching jobs -->
+                <div id="pinging-card-container"></div>
                 <script>
                     function acceptOnDemandJob(bookingId, btn) {
-                        btn.style.opacity = '0.5';
-                        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Securing Match...';
-                        
-                        const formData = new FormData();
-                        formData.append('booking_id', bookingId);
-                        
-                        fetch('accept_booking.php', {
-                            method: 'POST',
-                            body: formData
-                        })
-                        .then(res => res.json())
-                        .then(data => {
-                            if(data.success) {
-                                window.location.reload();
-                            } else {
-                                alert("Failed: " + (data.message || 'Error accepting job.'));
-                                btn.style.opacity = '1';
-                                btn.innerHTML = 'ACCEPT JOB';
-                            }
-                        })
-                        .catch(err => {
-                            alert('Network Error');
-                            btn.style.opacity = '1';
-                            btn.innerHTML = 'ACCEPT JOB';
-                        });
+                        btn.style.opacity = '0.7';
+                        btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Securing Match...';
+                        const formData = new FormData(); formData.append('booking_id', bookingId);
+                        fetch('accept_booking.php', { method: 'POST', body: formData })
+                            .then(res => res.json())
+                            .then(data => {
+                                if (data.success) { window.location.reload(); }
+                                else { alert("Failed: " + (data.message || 'Error')); btn.style.opacity = '1'; btn.innerHTML = 'ACCEPT JOB <i class="fas fa-check-circle"></i>'; }
+                            }).catch(err => { alert('Network Error'); btn.style.opacity = '1'; btn.innerHTML = 'ACCEPT JOB <i class="fas fa-check-circle"></i>'; });
                     }
                 </script>
+
             <?php elseif ($odType === 'active'): ?>
-                <div class="schedule-ticket" style="border: 2px solid var(--accent-yellow);">
-                    <div class="ticket-top" style="background:#fff8e1;">
-                        <div class="ticket-time-box" style="background:white; color:var(--accent-yellow);">
-                            <div><i class="fas fa-bolt"></i></div>
-                        </div>
-                        <div class="ticket-details">
-                            <h4>Active Job</h4>
-                            <p style="color:#f57c00; font-weight:600;">
+                <div class="app-card job-card"
+                    style="border-color: #f39c12; box-shadow: 0 8px 25px rgba(243, 156, 18, 0.15);">
+                    <div class="job-header active-bg">
+                        <div class="icon-box-large yellow"><i class="fas fa-bolt"></i></div>
+                        <div>
+                            <h4 class="job-title">Active Job</h4>
+                            <p class="job-subtitle" style="color:#e67e22;">
                                 <?php
                                 if ($onDemandJob['status'] == 'confirmed')
-                                    echo "New Pickup Assigned!";
+                                    echo "Navigate to Pickup Location";
                                 elseif ($onDemandJob['status'] == 'arriving')
-                                    echo "Heading to Pickup...";
+                                    echo "Passenger Boarding...";
                                 elseif ($onDemandJob['status'] == 'onboard')
-                                    echo "Passenger Onboard";
+                                    echo "Navigate to Destination";
                                 ?>
                             </p>
                         </div>
                     </div>
 
-                    <div style="padding: 15px; background: white; border-bottom: 1px solid #eee;">
-                        <div style="font-size:0.9rem; margin-bottom:8px;">
-                            <span style="color:green;">●</span> <b>From:</b>
-                            <?= htmlspecialchars($onDemandJob['pickup_location']) ?>
+                    <div class="route-path">
+                        <div class="stop-point">
+                            <div class="stop-dot dot-start"></div>
+                            <div class="stop-info">
+                                <div class="stop-label">Pick Up</div>
+                                <div class="stop-name"><?= htmlspecialchars($onDemandJob['pickup_location']) ?></div>
+                            </div>
                         </div>
-                        <div style="font-size:0.9rem;">
-                            <span style="color:red;">📍</span> <b>To:</b>
-                            <?= htmlspecialchars($onDemandJob['destination_name']) ?>
+                        <div class="stop-point">
+                            <div class="stop-dot dot-end"></div>
+                            <div class="stop-info">
+                                <div class="stop-label">Drop Off</div>
+                                <div class="stop-name"><?= htmlspecialchars($onDemandJob['destination_name']) ?></div>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="ticket-action" style="background: white;">
+                    <div class="action-area">
                         <?php if ($onDemandJob['status'] === 'confirmed'): ?>
-                            <a href="ondemand_active.php?id=<?= $onDemandJob['id'] ?>&status=arriving" class="btn-compact"
-                                style="background:var(--primary-blue);">
-                                Start Job <i class="fas fa-location-arrow" style="margin-left:5px;"></i>
+                            <a href="active_trip.php?id=BOOK:<?= $onDemandJob['id'] ?>" class="btn-massive blue">
+                                START JOB <i class="fas fa-location-arrow"></i>
                             </a>
                         <?php elseif ($onDemandJob['status'] === 'arriving'): ?>
-                            <a href="ondemand_active.php?id=<?= $onDemandJob['id'] ?>&status=onboard" class="btn-compact"
-                                style="background:#f39c12;">
-                                Picked Up <i class="fas fa-user-check" style="margin-left:5px;"></i>
+                            <a href="active_trip.php?id=BOOK:<?= $onDemandJob['id'] ?>" class="btn-massive yellow"
+                                style="color:#fff;">
+                                PASSENGER PICKED UP <i class="fas fa-user-check"></i>
                             </a>
                         <?php else: ?>
-                            <a href="ondemand_active.php?id=<?= $onDemandJob['id'] ?>&status=completed" class="btn-compact"
-                                style="background:var(--success);">
-                                Complete Ride <i class="fas fa-check" style="margin-left:5px;"></i>
+                            <a href="active_trip.php?id=BOOK:<?= $onDemandJob['id'] ?>" class="btn-massive green">
+                                COMPLETE RIDE <i class="fas fa-flag-checkered"></i>
                             </a>
                         <?php endif; ?>
                     </div>
@@ -608,93 +854,98 @@ foreach ($alertsQuery as $doc) {
 
         <div class="dashboard-section">
             <div class="section-header">
-                <span>Upcoming Schedule</span>
+                <span><i class="far fa-calendar-alt" style="margin-right: 8px; color:var(--primary-blue);"></i> Upcoming
+                    Schedule</span>
             </div>
 
             <?php if ($scheduledJob): ?>
-                <div class="schedule-ticket"
-                    style="<?= $scheduledJob['is_ongoing'] ? 'border: 2px solid var(--success);' : '' ?>">
-                    <div class="ticket-top">
-                        <div class="ticket-time-box">
-                            <div><?= date('H:i', strtotime($scheduledJob['departure_time'])) ?></div>
-                            <div style="font-size: 0.65rem; color: #555; margin-top: 2px;">
-                                <?= $scheduledJob['date_label'] ?>
-                            </div>
+                <div class="sched-ticket <?= $scheduledJob['is_ongoing'] ? 'active-trip' : '' ?>">
+                    <div class="sched-top">
+                        <div class="sched-time-block">
+                            <div class="time-big"><?= date('H:i', strtotime($scheduledJob['departure_time'])) ?></div>
+                            <div class="time-small"><?= $scheduledJob['date_label'] ?></div>
                         </div>
-                        <div class="ticket-details" style="width: 100%;">
-                            <?php if ($scheduledJob['is_overdue']): ?>
+
+                        <div class="sched-details">
+                            <?php if ($scheduledJob['is_overdue'] && !$scheduledJob['is_ongoing']): ?>
                                 <div
-                                    style="color:var(--danger); font-size:0.75rem; font-weight:700; display:flex; align-items:center; gap:5px; margin-bottom:5px;">
-                                    <i class="fas fa-exclamation-circle"></i> Late Departure
+                                    style="color:#e74c3c; font-size:0.75rem; font-weight:700; margin-bottom:5px; display:flex; align-items:center; gap:5px;">
+                                    <i class="fas fa-exclamation-circle"></i> LATE DEPARTURE
                                 </div>
                             <?php endif; ?>
                             <?php if ($scheduledJob['is_ongoing']): ?>
                                 <div
-                                    style="color:var(--success); font-size:0.75rem; font-weight:700; display:flex; align-items:center; gap:5px; margin-bottom:5px;">
-                                    <span class="pulse-dot"
-                                        style="width:8px; height:8px; background:var(--success); border-radius:50%; display:inline-block;"></span>
-                                    Trip in Progress
+                                    style="color:#27ae60; font-size:0.75rem; font-weight:700; margin-bottom:5px; display:flex; align-items:center; gap:5px;">
+                                    <span
+                                        style="width:8px; height:8px; background:#27ae60; border-radius:50%; animation: pulse 2s infinite;"></span>
+                                    TRIP IN PROGRESS
                                 </div>
                             <?php endif; ?>
-                            <h4><?= htmlspecialchars($scheduledJob['route_name']) ?></h4>
-                            <p><i class="fas fa-location-arrow" style="color:#ccc;"></i> To
+
+                            <h4 class="route-title">
+                                <?= htmlspecialchars($scheduledJob['route_name']) ?>
+                            </h4>
+                            <p class="route-dest">
+                                <i class="fas fa-flag-checkered"></i>
                                 <?= htmlspecialchars($scheduledJob['destination_name']) ?>
                             </p>
                         </div>
                     </div>
 
-                    <div class="ticket-action">
-                        <div style="font-size:0.85rem; color:#888; display:flex; align-items:center; gap:6px;">
-                            <i class="fas fa-users"></i> <b><?= ($scheduledJob['booked_count'] ?? 0) ?></b> /
-                            <?= ($scheduledJob['capacity'] ?? 13) ?>
+                    <div class="action-area">
+                        <div class="badge-group">
+                            <div class="stat-badge">
+                                <i class="fas fa-users" style="color:#3498db;"></i>
+                                <?= ($scheduledJob['booked_count'] ?? 0) ?> / <?= ($scheduledJob['capacity'] ?? 13) ?>
+                            </div>
                         </div>
+
                         <?php if ($scheduledJob['is_ongoing']): ?>
-                            <a href="trip_active.php?id=<?= $scheduledJob['schedule_id'] ?>" class="btn-compact"
-                                style="background:var(--success);">
-                                Resume Trip <i class="fas fa-play" style="font-size:0.7rem; margin-left:5px;"></i>
+                            <a href="active_trip.php?id=SCHED:<?= $scheduledJob['schedule_id'] ?>" class="btn-pill green">
+                                RESUME <i class="fas fa-play"></i>
                             </a>
                         <?php else: ?>
-                            <a href="trip_details.php?id=<?= $scheduledJob['schedule_id'] ?>" class="btn-compact"
-                                style="background:#333;">
-                                View Details
-                            </a>
+                            <button
+                                onclick="previewTrip('SCHED:<?= $scheduledJob['schedule_id'] ?>', '<?= htmlspecialchars(addslashes($scheduledJob['route_name'])) ?>', '<?= date('H:i', strtotime($scheduledJob['departure_time'])) ?>', '<?= $scheduledJob['date'] ?>', '<?= $today ?>', <?= $scheduledJob['is_ongoing'] ? 'true' : 'false' ?>)"
+                                class="btn-pill dark">
+                                DETAILS <i class="fas fa-chevron-right"></i>
+                            </button>
                         <?php endif; ?>
                     </div>
                 </div>
             <?php else: ?>
-                <div class="status-card"
-                    style="padding: 20px; box-shadow: none; border: 1px dashed #ddd; background: #fafafa;">
-                    <p style="color:#aaa; font-size:0.9rem; margin:0;">No upcoming schedules found.</p>
+                <div class="app-card status-card" style="padding: 30px 20px; background: #f8f9fa;">
+                    <p style="color:#a0aec0; font-size:1rem; font-weight:500; margin:0;">No upcoming schedules found.</p>
                 </div>
             <?php endif; ?>
         </div>
-
     </div>
 
     <button class="fab-report" id="draggableFab" onclick="toggleReportSheet(event)">
-        <i class="fas fa-broadcast-tower"></i> Live Report
+        <i class="fas fa-exclamation-triangle"></i> <span style="font-size:0.9rem;">REPORT</span>
     </button>
 
     <div class="report-overlay" id="reportOverlay" onclick="toggleReportSheet()"></div>
 
     <div class="report-bottom-sheet" id="reportSheet">
         <div class="sheet-drag-handle"></div>
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 15px;">
-            <h3 style="margin:0; font-size: 1.2rem; color: #333; font-weight: 700;">Live Service Report</h3>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
+            <h3 style="margin:0; font-size: 1.3rem; color: #2d3748; font-weight: 700;">Live Service Report</h3>
             <button onclick="toggleReportSheet()"
-                style="background: rgba(0,0,0,0.05); border: none; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #555; cursor: pointer;">
-                <i class="fas fa-times"></i>
+                style="background: #f1f3f5; border: none; width: 34px; height: 34px; border-radius: 50%; color: #4a5568; font-size:1.1rem; cursor: pointer;">
+                &times;
             </button>
         </div>
 
-        <div class="location-card" id="locationCard">
-            <div id="locationIcon" style="font-size: 1.2rem; color: #adb5bd;"><i class="fas fa-map-marker-alt"></i>
+        <div class="location-card" id="locationCard" style="background:#f8f9fa; margin-bottom:25px;">
+            <div id="locationIcon" style="font-size: 1.4rem; color: #cbd5e0;"><i class="fas fa-map-marker-alt"></i>
             </div>
             <div style="flex: 1;">
                 <div
-                    style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; color: #888; font-weight: 600; margin-bottom: 2px;">
+                    style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; color: #a0aec0; font-weight: 700; margin-bottom: 4px;">
                     Current Location</div>
-                <div id="locationStatusText" style="font-weight: 500; color: #333; line-height: 1.2;">Tap to detect
+                <div id="locationStatusText"
+                    style="font-weight: 600; color: #2d3748; line-height: 1.3; font-size:0.95rem;">Tap to detect
                     location...</div>
             </div>
         </div>
@@ -705,66 +956,69 @@ foreach ($alertsQuery as $doc) {
             <input type="hidden" name="lng" id="driver_lng">
             <input type="hidden" name="alert_type" id="final_alert_type">
 
-            <div id="step1-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+            <div id="step1-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:15px;">
                 <button type="button" class="report-btn btn-emergency"
-                    onclick="selectReportType('breakdown', 'Breakdown', 'fa-tools', '#dc3545', '#ffebee')">
+                    onclick="selectReportType('breakdown', 'Breakdown', 'fa-tools', '#e53e3e', '#fff5f5')">
                     <div class="icon-circle"><i class="fas fa-tools"></i></div>
-                    <span style="font-size: 0.9rem;">Breakdown</span>
+                    <span style="font-size: 0.95rem;">Breakdown</span>
                 </button>
                 <button type="button" class="report-btn btn-emergency"
-                    onclick="selectReportType('accident', 'Accident', 'fa-car-crash', '#dc3545', '#ffebee')">
+                    onclick="selectReportType('accident', 'Accident', 'fa-car-crash', '#e53e3e', '#fff5f5')">
                     <div class="icon-circle"><i class="fas fa-car-crash"></i></div>
-                    <span style="font-size: 0.9rem;">Accident</span>
+                    <span style="font-size: 0.95rem;">Accident</span>
                 </button>
                 <button type="button" class="report-btn btn-warning"
-                    onclick="selectReportType('traffic', 'Heavy Traffic', 'fa-traffic-light', '#f39c12', '#fff8e1')">
+                    onclick="selectReportType('traffic', 'Heavy Traffic', 'fa-traffic-light', '#dd6b20', '#fffff0')">
                     <div class="icon-circle"><i class="fas fa-traffic-light"></i></div>
-                    <span style="font-size: 0.9rem;">Heavy Traffic</span>
+                    <span style="font-size: 0.95rem;">Heavy Traffic</span>
                 </button>
                 <button type="button" class="report-btn btn-warning"
-                    onclick="selectReportType('rain', 'Heavy Rain', 'fa-cloud-showers-heavy', '#f39c12', '#fff8e1')">
-                    <div class="icon-circle"><i class="fas fa-cloud-showers-heavy"></i></div>
-                    <span style="font-size: 0.9rem;">Heavy Rain</span>
+                    onclick="selectReportType('rain', 'Heavy Rain', 'fa-cloud-showers-heavy', '#3182ce', '#ebf8ff')">
+                    <div class="icon-circle" style="color:#3182ce; background:#ebf8ff;"><i
+                            class="fas fa-cloud-showers-heavy"></i></div>
+                    <span style="font-size: 0.95rem; color:#2c5282;">Heavy Rain</span>
                 </button>
             </div>
 
             <div id="step2-confirm"
-                style="display:none; flex-direction:column; gap:15px; animation: slideUp 0.3s ease;">
+                style="display:none; flex-direction:column; gap:20px; animation: slideUp 0.3s ease;">
                 <div
-                    style="display:flex; align-items:center; gap:15px; padding:15px; background:#f9f9f9; border-radius:12px; border:1px solid #eee;">
+                    style="display:flex; align-items:center; gap:15px; padding:20px; background:#f8f9fa; border-radius:16px; border:1px solid #e2e8f0;">
                     <div id="confirmIconBg"
-                        style="width:50px; height:50px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.4rem;">
+                        style="width:55px; height:55px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.6rem;">
                         <i id="confirmIcon" class="fas fa-exclamation-triangle"></i>
                     </div>
                     <div>
-                        <div style="font-size:0.8rem; color:#888; text-transform:uppercase; font-weight:600;">Confirm
-                            Report</div>
-                        <div id="confirmTitle" style="font-size:1.2rem; font-weight:700; color:#333;">Category</div>
+                        <div
+                            style="font-size:0.75rem; color:#a0aec0; text-transform:uppercase; font-weight:700; letter-spacing:0.5px;">
+                            Confirm Report</div>
+                        <div id="confirmTitle"
+                            style="font-size:1.3rem; font-weight:700; color:#2d3748; margin-top:2px;">Category</div>
                     </div>
                 </div>
                 <div>
                     <label
-                        style="font-size:0.85rem; font-weight:600; color:#555; margin-bottom:5px; display:block;">Additional
+                        style="font-size:0.9rem; font-weight:600; color:#4a5568; margin-bottom:8px; display:block;">Additional
                         Details (Optional)</label>
                     <input type="text" name="alert_details" id="alert_details"
                         placeholder="e.g. Flat tire, blocked left lane..."
-                        style="width:100%; padding:12px; border:1px solid #ddd; border-radius:8px; font-family:inherit; outline:none;">
+                        style="width:100%; padding:15px; border:1px solid #cbd5e0; border-radius:12px; font-family:inherit; font-size:1rem; outline:none;">
                 </div>
-                <div style="display:flex; gap:10px; margin-top:10px;">
+                <div style="display:flex; gap:12px; margin-top:10px;">
                     <button type="button" onclick="cancelReport()"
-                        style="flex:1; padding:15px; background:#eee; color:#555; border:none; border-radius:12px; font-weight:600; cursor:pointer;">
-                        Cancel
+                        style="flex:1; padding:18px; background:#edf2f7; color:#4a5568; border:none; border-radius:14px; font-weight:700; font-size:1.05rem; cursor:pointer;">
+                        CANCEL
                     </button>
-                    <button type="submit" id="btnSubmitReport"
-                        style="flex:2; padding:15px; background:var(--primary-blue); color:white; border:none; border-radius:12px; font-weight:600; cursor:pointer; display:flex; justify-content:center; align-items:center; gap:8px;"
-                        onclick="showSendingFinal(this)">
-                        <i class="fas fa-paper-plane"></i> Send Alert
+                    <button type="submit" id="btnSubmitReport" onclick="showSendingFinal(this)"
+                        style="flex:2; padding:18px; color:white; border:none; border-radius:14px; font-weight:700; font-size:1.05rem; cursor:pointer; display:flex; justify-content:center; align-items:center; gap:10px;">
+                        SEND ALERT <i class="fas fa-paper-plane"></i>
                     </button>
                 </div>
             </div>
         </form>
     </div>
 
+    <?php include 'preview_modal.php'; ?>
     <?php include 'driver_navbar.php'; ?>
 
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
@@ -775,18 +1029,172 @@ foreach ($alertsQuery as $doc) {
         const driverIsOnline = <?= $isOnline ? 'true' : 'false' ?>;
 
         const firebaseConfig = {
-            apiKey: "AIzaSyD_E8JfmScnhsxqW-sBCOfW8kRFdNcrGIk",
-            authDomain: "campuspulse-bfd09.firebaseapp.com",
-            projectId: "campuspulse-bfd09",
-            storageBucket: "campuspulse-bfd09.firebasestorage.app",
-            messagingSenderId: "380453135946",
-            appId: "1:380453135946:web:00e83d9df74b17c19ba8b3"
+            apiKey: "<?= MAPS_API_KEY ?? '' ?>",
+            authDomain: "<?= FIREBASE_AUTH_DOMAIN ?? '' ?>",
+            projectId: "<?= FIREBASE_PROJECT_ID ?? '' ?>",
+            storageBucket: "<?= FIREBASE_STORAGE_BUCKET ?? '' ?>",
+            messagingSenderId: "<?= FIREBASE_MESSAGING_SENDER_ID ?? '' ?>",
+            appId: "<?= FIREBASE_APP_ID ?? '' ?>"
         };
         if (!firebase.apps.length) {
             firebase.initializeApp(firebaseConfig);
         }
+
+        // --- HTTPS CHECK ---
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+            console.warn('[CampusPulse] Push Notifications require HTTPS. Alerts may be blocked on this origin.');
+        }
+
+        // --- TEST FUNCTION (run window.testNotification() in console to verify) ---
+        window.testNotification = function () {
+            if (!('Notification' in window)) {
+                console.error('Browser does not support notifications.');
+                return;
+            }
+            if (Notification.permission === 'granted') {
+                new Notification('CampusPulse Test', { body: 'Push notifications are working!', icon: '../img/favicon.ico' });
+                console.log('%c[CampusPulse] Test notification sent!', 'color:green;font-weight:bold');
+            } else if (Notification.permission === 'default') {
+                Notification.requestPermission().then(p => console.log('[CampusPulse] Permission result:', p));
+            } else {
+                console.warn('[CampusPulse] Notifications are BLOCKED. Enable them in your browser site settings.');
+            }
+        };
+
+        function firePushNotification(title, body) {
+            if (Notification.permission !== 'granted') return;
+            try {
+                new Notification(title, { body: body, icon: '../img/favicon.ico' });
+                if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+            } catch (e) {
+                console.warn('[CampusPulse] Notification error:', e);
+            }
+        }
+
+        function requestPushPermissions() {
+            if (!('Notification' in window)) return;
+            Notification.requestPermission().then(permission => {
+                if (permission === 'granted') {
+                    document.getElementById('pushPrompt').style.display = 'none';
+                    console.log('[CampusPulse] Push notifications enabled.');
+                } else {
+                    console.warn('[CampusPulse] Push permission denied.');
+                }
+            });
+        }
+
+        document.addEventListener("DOMContentLoaded", function () {
+            if ('Notification' in window && Notification.permission === 'default') {
+                document.getElementById('pushPrompt').style.display = 'block';
+            }
+
+            const db = firebase.firestore();
+            const driverId = "<?= $driverId ?>";
+            // Record page-load time; only NEW notifications after this point trigger push
+            const sessionStartTime = Date.now();
+
+            db.collection("Notifications").where("user_id", "==", driverId)
+                .onSnapshot((snapshot) => {
+                    snapshot.docChanges().forEach((change) => {
+                        if (change.type !== 'added') return;
+                        const data = change.doc.data();
+                        // created_at is stored as "YYYY-MM-DD HH:MM:SS" — fix for Safari/iOS Date parsing
+                        const notifTime = new Date((data.created_at || '').replace(' ', 'T')).getTime();
+                        if (notifTime > sessionStartTime) {
+                            firePushNotification('CampusPulse Notification', data.message || data.title || 'New update available');
+                        }
+                    });
+                });
+
+            // Phase 2: Live Listener for On-Demand jobs
+            db.collection("Bookings")
+                .where("candidate_driver_id", "==", driverId)
+                .where("status", "==", "searching")
+                .onSnapshot((snapshot) => {
+                    const pingContainer = document.getElementById('pinging-card-container');
+                    const scanningCard = document.getElementById('scanning-card');
+                    if (!pingContainer) return;
+                    
+                    let hasPing = false;
+                    
+                    snapshot.docChanges().forEach((change) => {
+                        if (change.type === 'added' || change.type === 'modified') {
+                            const data = change.doc.data();
+                            const bookingId = change.doc.id;
+                            hasPing = true;
+                            
+                            pingContainer.innerHTML = `
+                                <div class="app-card job-card pinging">
+                                    <div class="job-header pinging-bg">
+                                        <div class="icon-box-large green"><i class="fas fa-bell"></i></div>
+                                        <div>
+                                            <h4 class="job-title" style="color:#27ae60;">NEW RIDE REQUEST</h4>
+                                            <p class="job-subtitle">Nearest Passenger Match</p>
+                                        </div>
+                                    </div>
+                                    <div class="route-path">
+                                        <div class="stop-point">
+                                            <div class="stop-dot dot-start"></div>
+                                            <div class="stop-info" id="ping-pickup-${bookingId}">
+                                                <div class="stop-label">Pick Up</div>
+                                                <div class="stop-name">Fetching Location...</div>
+                                            </div>
+                                        </div>
+                                        <div class="stop-point">
+                                            <div class="stop-dot dot-end"></div>
+                                            <div class="stop-info" id="ping-dropoff-${bookingId}">
+                                                <div class="stop-label">Drop Off</div>
+                                                <div class="stop-name">Fetching Location...</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="action-area">
+                                        <button onclick="acceptOnDemandJob('${bookingId}', this)" class="btn-massive green">
+                                            ACCEPT JOB <i class="fas fa-check-circle"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            `;
+                            
+                            // Dynamically pull stop names to avoid hard reload!
+                            if(data.pickup_stop_id) {
+                                db.collection('Stops').doc(data.pickup_stop_id).get().then(doc => {
+                                    const el = document.querySelector(`#ping-pickup-${bookingId} .stop-name`);
+                                    if(doc.exists && el) el.innerText = doc.data().name || doc.id;
+                                });
+                            }
+                            if(data.dropoff_stop_id) {
+                                db.collection('Stops').doc(data.dropoff_stop_id).get().then(doc => {
+                                    const el = document.querySelector(`#ping-dropoff-${bookingId} .stop-name`);
+                                    if(doc.exists && el) el.innerText = doc.data().name || doc.id;
+                                });
+                            }
+                            
+                            // Trigger Audio Alert
+                            if (change.type === 'added') {
+                                const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+                                audio.play().catch(e => {}); // Ignore interaction requirement blocks silently
+                            }
+                        }
+                        if (change.type === 'removed') {
+                            pingContainer.innerHTML = '';
+                        }
+                    });
+                    
+                    // Toggle visibility automatically
+                    if (hasPing && scanningCard) {
+                        scanningCard.style.display = 'none';
+                    } else if (snapshot.empty && scanningCard) {
+                        const statusText = document.getElementById('statusText');
+                        if (statusText && statusText.innerText.toUpperCase() === 'ONLINE') {
+                            scanningCard.style.display = 'block';
+                        }
+                        pingContainer.innerHTML = '';
+                    }
+                });
+        });
     </script>
-    <script src="driver_dashboard.js"></script>
+    <script src="driver_dashboard.js?v=<?= time() ?>"></script>
 </body>
 
 </html>

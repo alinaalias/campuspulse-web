@@ -85,8 +85,89 @@ try {
         $alerts[] = $data;
     }
 } catch (Exception $e) {
-    $alerts = [];
+    // If announcements fail, just continue with empty array
 }
+
+try {
+    $notificationsDocs = $firestore->database()->collection('Notifications')
+        ->where('user_id', '=', $driverId)
+        ->documents();
+
+    foreach ($notificationsDocs as $doc) {
+        $data = $doc->data();
+        $data['id'] = $doc->id();
+        $isRead = $data['is_read'] ?? true;
+        $data['is_new'] = !$isRead;
+
+        $publishTime = strtotime($data['created_at'] ?? 'now');
+        $diff = $now - $publishTime;
+        if ($diff < 60) {
+            $data['relative_time'] = 'Just now';
+        } elseif ($diff < 3600) {
+            $data['relative_time'] = floor($diff / 60) . ' mins ago';
+        } elseif ($diff < 86400) {
+            $data['relative_time'] = floor($diff / 3600) . ' hours ago';
+        } else {
+            $data['relative_time'] = date('d M', $publishTime);
+        }
+
+        $alerts[] = $data;
+
+        // Mark as read immediately
+        if ($isRead === false) {
+            $firestore->database()->collection('Notifications')->document($doc->id())->update([
+                ['path' => 'is_read', 'value' => true]
+            ]);
+        }
+    }
+} catch (Exception $e) {
+    // Fail silently for personal notifications too
+}
+
+// 3. Check for Almost Expired Credentials
+try {
+    $driverData = $firestore->database()->collection('Staffs')->document($driverId)->snapshot()->data();
+    $todayDate = new DateTime('today');
+    $licExp = $driverData['license_expiry'] ?? '';
+    $psvExp = $driverData['psv_expiry'] ?? '';
+    $licDays = !empty($licExp) ? (int) $todayDate->diff(new DateTime($licExp))->format('%r%a') : null;
+    $psvDays = !empty($psvExp) ? (int) $todayDate->diff(new DateTime($psvExp))->format('%r%a') : null;
+
+    if ($licDays !== null && $licDays >= 0 && $licDays <= 30) {
+        $alerts[] = [
+            'id' => 'lic_warn_' . $now,
+            'title' => 'License Expiring Soon',
+            'message' => "Your driver license expires in $licDays days. Please upload renewed documents in your Profile soon.",
+            'tag' => '#Warning',
+            'is_new' => true,
+            'timestamp' => $now,
+            'relative_time' => 'System Alert'
+        ];
+    }
+    if ($psvDays !== null && $psvDays >= 0 && $psvDays <= 30) {
+        $alerts[] = [
+            'id' => 'psv_warn_' . $now,
+            'title' => 'PSV Expiring Soon',
+            'message' => "Your PSV license expires in $psvDays days. Please upload renewed documents in your Profile soon.",
+            'tag' => '#Warning',
+            'is_new' => true,
+            'timestamp' => $now,
+            'relative_time' => 'System Alert'
+        ];
+    }
+} catch (Exception $e) {}
+
+// 4. Merge & Sort Arrays by timestamp
+foreach ($alerts as &$a) {
+    if (!isset($a['timestamp'])) {
+        $a['timestamp'] = !empty($a['schedule_time']) ? strtotime($a['schedule_time']) : strtotime($a['created_at'] ?? 'now');
+    }
+}
+unset($a);
+
+usort($alerts, function($a, $b) {
+    return $b['timestamp'] <=> $a['timestamp'];
+});
 ?>
 
 <!DOCTYPE html>
@@ -269,6 +350,7 @@ try {
                 $tag = $alert['tag'] ?? '#Info';
                 $cardStyle = 'alert-info';
                 $icon = 'fa-info-circle';
+                $iconClassEx = '';
 
                 // Add the 'is-new' class if it's unread
                 $newClass = !empty($alert['is_new']) ? 'is-new' : '';
@@ -279,11 +361,15 @@ try {
                 } elseif (strpos($tag, 'Warning') !== false || strpos($tag, 'Traffic') !== false) {
                     $cardStyle = 'alert-warning';
                     $icon = 'fa-triangle-exclamation';
+                } elseif (strpos($tag, 'Account') !== false) {
+                    $cardStyle = 'alert-info';
+                    $icon = 'fa-check-circle';
+                    $iconClassEx = 'style="color:#27ae60"';
                 }
                 ?>
                 <div class="alert-card <?= $cardStyle ?> <?= $newClass ?>">
                     <div style="display:flex; align-items:center;">
-                        <div class="icon-circle"><i class="fas <?= $icon ?>"></i></div>
+                        <div class="icon-circle" <?= $iconClassEx ?>><i class="fas <?= $icon ?>"></i></div>
                         <div style="flex:1;">
                             <div class="alert-time">
                                 <?= $alert['relative_time'] ?> • <?= htmlspecialchars($tag) ?>

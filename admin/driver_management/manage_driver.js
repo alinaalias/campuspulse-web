@@ -1,37 +1,94 @@
 /**
- * 1. Toggle Driver Status (Active/Inactive)
+ * 1. Toggle Driver Status (Active/Inactive) via Reason Modal
  */
-function toggleStatus(checkbox, driverId) {
-    const newStatus = checkbox.checked ? 'active' : 'inactive';
-    const actionName = checkbox.checked ? 'activate' : 'deactivate';
+let pendingStatusDriverId = null;
+let pendingStatus = null;
+let pendingCheckbox = null;
 
-    if (!confirm("Are you sure you want to " + actionName + " this driver?")) {
-        checkbox.checked = !checkbox.checked;
-        return;
+function toggleStatus(checkbox, driverId) {
+    pendingStatusDriverId = driverId;
+    pendingStatus = checkbox.checked ? 'active' : 'inactive';
+    pendingCheckbox = checkbox;
+
+    const title = document.getElementById('statusModalTitle');
+    const desc = document.getElementById('statusModalDesc');
+    const select = document.getElementById('statusReasonSelect');
+
+    if (pendingStatus === 'active') {
+        title.innerText = 'Activate Driver';
+        desc.innerText = 'Please provide a reason to activate this driver.';
+        select.innerHTML = `
+            <option value="">-- Select a reason --</option>
+            <option value="Documents Verified">Documents Verified</option>
+            <option value="Return from Leave">Return from Leave</option>
+            <option value="Suspension Lifted">Suspension Lifted</option>
+            <option value="Probation Passed">Probation Passed</option>
+            <option value="Other">Other</option>
+        `;
+    } else {
+        title.innerText = 'Deactivate Driver';
+        desc.innerText = 'Please provide a reason for deactivating this driver.';
+        select.innerHTML = `
+            <option value="">-- Select a reason --</option>
+            <option value="Disciplinary Suspension">Disciplinary Suspension</option>
+            <option value="Medical Leave">Medical Leave</option>
+            <option value="Resigned">Resigned</option>
+            <option value="Credentials Verification Required">Credentials Verification Required</option>
+            <option value="Other">Other</option>
+        `;
     }
 
-    checkbox.disabled = true;
+    document.getElementById('confirmStatusBtn').disabled = true;
+    document.getElementById('statusReasonModal').style.display = 'flex';
+}
+
+function checkReasonSelection() {
+    const select = document.getElementById('statusReasonSelect');
+    document.getElementById('confirmStatusBtn').disabled = select.value === '';
+}
+
+function closeStatusModal() {
+    document.getElementById('statusReasonModal').style.display = 'none';
+    if (pendingCheckbox) {
+        pendingCheckbox.checked = !pendingCheckbox.checked;
+    }
+    pendingStatusDriverId = null;
+    pendingStatus = null;
+    pendingCheckbox = null;
+}
+
+function closeStatusModalEvent(e) {
+    if (e.target.id === 'statusReasonModal') closeStatusModal();
+}
+
+function confirmStatusChange() {
+    const reason = document.getElementById('statusReasonSelect').value;
+    const driverId = pendingStatusDriverId;
+    const newStatus = pendingStatus;
+    const btn = document.getElementById('confirmStatusBtn');
+
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+    btn.disabled = true;
+    document.getElementById('statusReasonSelect').disabled = true;
 
     fetch('toggle_driver_status.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'id=' + encodeURIComponent(driverId) + '&status=' + encodeURIComponent(newStatus)
+        body: 'id=' + encodeURIComponent(driverId) + '&status=' + encodeURIComponent(newStatus) + '&reason=' + encodeURIComponent(reason)
     })
         .then(res => res.json())
         .then(data => {
-            checkbox.disabled = false;
             if (data.success) {
                 location.reload();
             } else {
                 alert("Error: " + (data.message || "Failed to update status"));
-                checkbox.checked = !checkbox.checked;
+                closeStatusModal();
             }
         })
         .catch(err => {
             console.error(err);
             alert("Network Error: Could not reach server.");
-            checkbox.disabled = false;
-            checkbox.checked = !checkbox.checked;
+            closeStatusModal();
         });
 }
 
@@ -91,32 +148,27 @@ function resetSaveButton(btn, select) {
 /**
  * 4. Modal Profile UI Drivers Data Handling
  */
+let currentReviewDriverId = null;
+
 function openHrModal(driverId) {
     if (typeof driverDataset === 'undefined') {
         alert("System error: Driver dataset not loaded.");
         return;
     }
 
+    currentReviewDriverId = driverId;
     const driver = driverDataset.find(d => d.id === driverId);
     if (!driver) return;
 
     document.getElementById('modalName').textContent = driver.full_name || 'N/A';
     document.getElementById('modalId').textContent = driver.id;
 
-    // --- UPDATED IMAGE LOGIC: Using the _url keys processed in PHP ---
     const fallback = "https://cdn-icons-png.flaticon.com/512/149/149071.png";
     const noDocFallback = "https://via.placeholder.com/400x200?text=No+Document+Uploaded";
 
-    // Profile Pic
     document.getElementById('modalImg').src = driver.profile_pic_url || fallback;
-
-    // License Image (Using the processed license_pic_url)
-    const licImg = document.getElementById('modalLicImg');
-    licImg.src = driver.license_pic_url || noDocFallback;
-
-    // PSV Image (Using the processed psv_pic_url)
-    const psvImg = document.getElementById('modalPsvImg');
-    psvImg.src = driver.psv_pic_url || noDocFallback;
+    document.getElementById('modalLicImg').src = driver.license_pic_url || noDocFallback;
+    document.getElementById('modalPsvImg').src = driver.psv_pic_url || noDocFallback;
 
     document.getElementById('modalIc').textContent = driver.ic_number || 'No data';
     document.getElementById('modalEmail').textContent = driver.email || 'No data';
@@ -129,7 +181,74 @@ function openHrModal(driverId) {
     document.getElementById('modalAddress').textContent = driver.home_address || 'No data';
     document.getElementById('modalExp').textContent = (driver.years_experience ? driver.years_experience + ' years' : 'No data');
 
+    // History Injection
+    const historyEl = document.getElementById('modalStatusHistory');
+    if (driver.last_status_change_reason) {
+        const admin = driver.last_status_change_admin || 'Unknown Admin';
+        const date = driver.last_status_change_at || 'Unknown Date';
+        historyEl.innerHTML = `Last updated by <strong>${admin}</strong> on <strong>${date}</strong> for: <em>${driver.last_status_change_reason}</em>`;
+    } else {
+        historyEl.innerHTML = 'No history available.';
+    }
+
+    // Pending Review Control Injection
+    const actionArea = document.getElementById('modalActionArea');
+    if (actionArea) {
+        if (driver.status === 'pending_review') {
+            document.getElementById('rejectReasonBox').style.display = 'none';
+            document.getElementById('btnApproveReview').style.display = 'block';
+            document.getElementById('btnRejectReview').style.display = 'block';
+            document.getElementById('btnConfirmReject').style.display = 'none';
+            document.getElementById('reviewRejectReason').value = '';
+            actionArea.style.display = 'block';
+        } else {
+            actionArea.style.display = 'none';
+        }
+    }
+
     document.getElementById('hrModal').style.display = 'flex';
+}
+
+function reviewDriverAction(actionType) {
+    if (actionType === 'approve') {
+        processDriverReview('approve', '');
+    } else if (actionType === 'reject') {
+        document.getElementById('btnApproveReview').style.display = 'none';
+        document.getElementById('btnRejectReview').style.display = 'none';
+        document.getElementById('rejectReasonBox').style.display = 'block';
+        document.getElementById('btnConfirmReject').style.display = 'block';
+    }
+}
+
+function submitRejectReview() {
+    const reason = document.getElementById('reviewRejectReason').value.trim();
+    if (!reason) {
+        alert("Please provide a rejection reason.");
+        return;
+    }
+    processDriverReview('reject', reason);
+}
+
+function processDriverReview(action, reason) {
+    if (!currentReviewDriverId) return;
+
+    fetch('process_driver_review.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'id=' + encodeURIComponent(currentReviewDriverId) + '&action=' + encodeURIComponent(action) + '&reason=' + encodeURIComponent(reason)
+    })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                alert(data.message || "Review processed successfully.");
+                location.reload();
+            } else {
+                alert("Error: " + (data.message || "Failed to process review"));
+            }
+        })
+        .catch(err => {
+            alert("Network Error: Could not reach server.");
+        });
 }
 
 function closeHrModal() {
@@ -139,7 +258,6 @@ function closeHrModal() {
 function closeHrModalEvent(e) {
     if (e.target.id === 'hrModal') closeHrModal();
 }
-
 
 /**
  * 5. Dynamic Filtering & Pagination
@@ -165,6 +283,7 @@ function applyPagination() {
         if (currentFilter === 'active' && card.dataset.active !== 'true') passesFilter = false;
         if (currentFilter === 'unassigned' && card.dataset.unassigned !== 'true') passesFilter = false;
         if (currentFilter === 'critical' && card.dataset.critical !== 'true') passesFilter = false;
+        if (currentFilter === 'pending' && card.dataset.pending !== 'true') passesFilter = false;
 
         if (!passesFilter) {
             card.classList.add('hidden');
@@ -192,10 +311,10 @@ function applyPagination() {
         if (currentFilter === 'active') return c.dataset.active === 'true';
         if (currentFilter === 'unassigned') return c.dataset.unassigned === 'true';
         if (currentFilter === 'critical') return c.dataset.critical === 'true';
+        if (currentFilter === 'pending') return c.dataset.pending === 'true';
         return true;
     }).length;
 
-    // --- UPDATED: Handle Empty Filter Message (Especially for Critical Actions) ---
     if (totalMatching === 0) {
         if (emptyMsgDiv) {
             emptyMsgDiv.style.display = 'block';

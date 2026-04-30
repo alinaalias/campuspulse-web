@@ -504,7 +504,7 @@ body.driver-body {
 
 /* 1. Deep Blue Header */
 .driver-header {
-    background: linear-gradient(135deg, #0d47a1, #1976d2); /* Richer Blue */
+    background: linear-gradient(135deg, var(--primary-blue), #0d3c78);
     color: white;
     padding: 20px 25px 80px; /* TALLER PADDING (80px) */
     border-bottom-left-radius: 30px;
@@ -1365,4 +1365,241 @@ body.schedule-body {
     .route-grid {
         grid-template-columns: 1fr;
     }
+}
+
+/* =========================================
+   14. UNIFIED SCHEDULE TICKET & MODAL
+   ========================================= */
+
+body.modal-open {
+    overflow: hidden;
+    height: 100vh;
+    overscroll-behavior: none;
+}
+
+/* Smooth Pulse Animation for active trips */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .5; }
+}
+
+/* CARD STYLING TO MATCH IMAGE */
+.sched-ticket {
+    background: white;
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.04);
+    border: 1px solid rgba(0, 0, 0, 0.02);
+    margin-bottom: 20px;
+    transition: transform 0.2s;
+}
+
+.sched-ticket.active-trip {
+    border: 2px solid #27ae60;
+    box-shadow: 0 8px 25px rgba(39, 174, 96, 0.15);
+}
+
+.sched-top {
+    display: flex;
+}
+
+/* LEFT SIDE: TIME */
+.sched-time-block {
+    background: #f8f9fa;
+    width: 90px;
+    padding: 20px 15px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-right: 1px dashed #e2e8f0;
+}
+
+.time-big {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #2d3748;
+    line-height: 1;
+    margin-bottom: 4px;
+}
+
+.time-small {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #a0aec0;
+    text-transform: uppercase;
+}
+
+/* RIGHT SIDE: ROUTE INFO */
+.sched-details {
+    padding: 20px 15px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.route-title {
+    margin: 0 0 6px 0;
+    font-size: 1.15rem;
+    color: #2d3748;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.route-dest {
+    margin: 0;
+    color: #a0aec0;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 500;
+}
+
+.route-dest i {
+    color: #cbd5e0;
+}
+
+/* BOTTOM SIDE: ACTIONS & BADGES */
+.action-area {
+    padding: 15px 15px 15px 90px;
+    /* Offset to align with details, leaving time block empty */
+    border-top: 1px dashed #e2e8f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    /* NEW: Allows elements to wrap if they run out of space */
+    gap: 12px;
+}
+
+.badge-group {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.stat-badge {
+    background: #edf2f7;
+    color: #4a5568;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* PILL BUTTONS */
+.btn-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 18px;
+    border-radius: 25px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    border: none;
+    cursor: pointer;
+    transition: transform 0.2s;
+    text-decoration: none;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    /* NEW: Prevents text inside button from breaking */
+}
+
+.btn-pill:active {
+    transform: scale(0.95);
+}
+
+.btn-pill.dark {
+    background: #2d3748;
+    color: white;
+}
+
+.btn-pill.green {
+    background: #27ae60;
+    color: white;
+    box-shadow: 0 4px 10px rgba(39, 174, 96, 0.3);
+}
+
+@media (max-width: 420px) {
+
+    /* On small screens, reduce the time block size slightly */
+    .sched-time-block {
+        width: 75px;
+        padding: 15px 10px;
+    }
+
+    /* Remove the 90px offset so the content can breathe */
+    .action-area {
+        padding: 15px;
+        flex-direction: column;
+        /* Stacks the badges and button vertically */
+        align-items: stretch;
+        /* Makes them stretch to fill the card */
+    }
+
+    /* Center the badges */
+    .badge-group {
+        justify-content: flex-start;
+        margin-bottom: 5px;
+    }
+
+    /* Make the button full-width for easy tapping */
+    .btn-pill {
+        width: 100%;
+        padding: 12px;
+    }
+}
+
+/* PREVIEW MODAL */
+@keyframes slideUp {
+    from {
+        transform: translateY(100%);
+    }
+
+    to {
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideDown {
+    from {
+        transform: translateY(0);
+    }
+
+    to {
+        transform: translateY(100%);
+    }
+}
+
+/* This class will be added by JS when closing */
+.slide-down-anim {
+    animation: slideDown 0.25s ease-in forwards !important;
+}
+
+#previewModal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 10000;
+    align-items: flex-end;
+}
+
+.modal-content {
+    background: white;
+    width: 100%;
+    border-top-left-radius: 30px;
+    border-top-right-radius: 30px;
+    padding: 25px;
+    max-height: 95vh;
+    display: flex;
+    flex-direction: column;
+    animation: slideUp 0.3s ease-out;
 }

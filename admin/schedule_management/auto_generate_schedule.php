@@ -9,6 +9,7 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
 
 $date = $_POST['date'] ?? '';
 $routeId = $_POST['route_id'] ?? '';
+$direction = $_POST['direction'] ?? '';
 $shuttles = $_POST['shuttles'] ?? [];
 $interval = intval($_POST['interval'] ?? 15);
 $peaks = $_POST['peaks'] ?? [];
@@ -71,7 +72,7 @@ if ($shuttleCount < $requiredShuttles) {
 ========================= */
 $windowMap = [
     'morning' => ['07:00', '10:00'],
-    'evening' => ['17:00', '19:30']
+    'evening' => ['17:00', '20:00']
 ];
 
 /* =========================
@@ -196,6 +197,7 @@ foreach ($peaks as $peakKey) {
             $firestore->database()->collection('Schedules')->document($scheduleId)->set([
                 'schedule_id' => $scheduleId,
                 'date' => $date,
+                'direction' => $direction,
                 'route_id' => $routeId,
                 'start_stop_id' => $route['start_stop_id'],
                 'end_stop_id' => $route['end_stop_id'],
