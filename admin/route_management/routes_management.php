@@ -22,9 +22,9 @@ foreach ($stopsSnap as $s) {
 
 $routesSnap = $firestore->database()->collection('Routes')->documents();
 
-$pageTitle = "Route Management";
+$pageTitle = "Routes Management - CampusPulse";
 $depth = '../../';
-include $depth . 'layout/admin_header.php';
+include $depth . 'layout/admin/header.php';
 ?>
 
 
@@ -1001,4 +1001,4 @@ include $depth . 'layout/admin_header.php';
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 </script>
-<?php include $depth . 'layout/admin_footer.php'; ?>
+<?php include $depth . 'layout/admin/footer.php'; ?>

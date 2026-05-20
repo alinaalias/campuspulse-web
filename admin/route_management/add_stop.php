@@ -42,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $pageTitle = 'Add Stop';
 $depth = '../../';
-include $depth . 'layout/admin_header.php';
+include $depth . 'layout/admin/header.php';
 ?>
 
 <div class="card" style="max-width: 500px; margin: 0 auto;">
@@ -75,4 +75,4 @@ include $depth . 'layout/admin_header.php';
         </div>
     </form>
 </div>
-<?php include $depth . 'layout/admin_footer.php'; ?>
+<?php include $depth . 'layout/admin/footer.php'; ?>

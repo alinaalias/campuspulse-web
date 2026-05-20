@@ -17,15 +17,26 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 $bookingId = $_POST['booking_id'] ?? '';
 $driverId = $_SESSION['user_id'] ?? '';
-$shuttleId = $_SESSION['assigned_shuttle_id'] ?? '';
 
-if (empty($bookingId) || empty($driverId) || empty($shuttleId)) {
+if (empty($bookingId) || empty($driverId)) {
     echo json_encode(['success' => false, 'message' => 'Missing session or booking references.']);
     exit();
 }
 
 try {
     $db = $firestore->database();
+
+    $driverSnap = $db->collection('Staffs')->document($driverId)->snapshot();
+    $shuttleId = '';
+    if ($driverSnap->exists()) {
+        $shuttleId = $driverSnap->data()['assigned_shuttle_id'] ?? '';
+    }
+
+    if (empty($shuttleId)) {
+        echo json_encode(['success' => false, 'message' => 'No active shuttle assigned to this driver.']);
+        exit();
+    }
+
     $bookingRef = $db->collection('Bookings')->document($bookingId);
     $shuttleRef = $db->collection('Shuttles')->document($shuttleId);
 
@@ -36,12 +47,12 @@ try {
         if (!$snap->exists()) {
             throw new Exception("Booking ticket no longer exists.");
         }
-        
+
         $bData = $snap->data();
-        
+
         // Race Condition Validation Shield
         if (($bData['status'] ?? '') !== 'searching') {
-            throw new Exception("Ride already accepted by another driver or expired.");
+            throw new Exception("Ride already accepted by another driver, cancelled, or expired.");
         }
 
         // Write Phase (Multi-Document Update)
@@ -53,7 +64,7 @@ try {
         ]);
 
         $transaction->update($shuttleRef, [
-            ['path' => 'job_status', 'value' => 'In Job'],
+            ['path' => 'job_status', 'value' => 'in job'],
             ['path' => 'updated_at', 'value' => date('Y-m-d H:i:s')]
         ]);
     });

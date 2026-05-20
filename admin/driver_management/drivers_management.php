@@ -7,9 +7,6 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
     exit();
 }
 
-// 1. Get Search Term
-$search = trim($_GET['search'] ?? '');
-
 /* Fetch shuttles */
 $shuttles = [];
 foreach ($firestore->database()->collection('Shuttles')->where('status', '=', 'active')->documents() as $s) {
@@ -26,14 +23,50 @@ $totalUnassigned = 0;
 $criticalActions = 0;
 $totalPending = 0;
 
+// THE FIX: Restored the array to track taken shuttles
+$assignedShuttles = []; 
+
 $todayDate = new DateTime('today');
+
+$driverRatings = [];
+
+// Fetch all ratings once
+$ratingsSnapshot = $firestore->database()->collection('Ratings')->documents();
+
+foreach ($ratingsSnapshot as $r) {
+    if (!$r->exists()) continue;
+
+    $data = $r->data();
+    $driverId = $data['driver_id'] ?? null;
+    $rating = isset($data['rating']) ? (float)$data['rating'] : 0;
+
+    if (!$driverId) continue;
+
+    if (!isset($driverRatings[$driverId])) {
+        $driverRatings[$driverId] = [
+            'total' => 0,
+            'count' => 0
+        ];
+    }
+
+    $driverRatings[$driverId]['total'] += $rating;
+    $driverRatings[$driverId]['count'] += 1;
+}
 
 foreach ($driversSnapshot as $doc) {
     if (!$doc->exists())
         continue;
     $data = $doc->data();
     $data['id'] = $doc->id();
+    $driverId = $data['id'];
 
+    if (isset($driverRatings[$driverId])) {
+        $avg = $driverRatings[$driverId]['total'] / $driverRatings[$driverId]['count'];
+        $data['rating'] = $avg;
+    } else {
+        $data['rating'] = null;
+    }
+    
     // --- Expiration Math ---
     $licExp = $data['license_expiry'] ?? '';
     $psvExp = $data['psv_expiry'] ?? '';
@@ -81,10 +114,12 @@ foreach ($driversSnapshot as $doc) {
 
     if (empty($data['assigned_shuttle_id'])) {
         $totalUnassigned++;
+    } else {
+        // THE FIX: Restored adding the shuttle to the tracking array
+        $assignedShuttles[] = $data['assigned_shuttle_id'];
     }
 
     // --- NEW: DOCUMENT IMAGE PROCESSING (FIX FOR VIEWING) ---
-    // We convert the Storage Paths (e.g. driver_credentials/DRV001_license.jpeg) into viewable URLs
     $imgFields = ['profile_pic', 'license_pic', 'psv_pic'];
     foreach ($imgFields as $field) {
         $val = $data[$field] ?? '';
@@ -93,25 +128,13 @@ foreach ($driversSnapshot as $doc) {
         } elseif (strpos($val, 'http') === 0) {
             $data[$field . '_url'] = $val;
         } else {
-            // Encode path for Firebase Storage URL
             $cleanPath = str_replace('/', '%2F', $val);
             $data[$field . '_url'] = "https://firebasestorage.googleapis.com/v0/b/campuspulse-bfd09.firebasestorage.app/o/{$cleanPath}?alt=media";
         }
     }
 
-    // 2. Filter Logic
-    if ($search) {
-        $term = strtolower($search);
-        $name = strtolower($data['full_name'] ?? '');
-        $id = strtolower($data['id']);
-        $shuttle = strtolower($data['assigned_shuttle_id'] ?? '');
-
-        if (str_contains($name, $term) || str_contains($id, $term) || str_contains($shuttle, $term)) {
-            $drivers[] = $data;
-        }
-    } else {
-        $drivers[] = $data;
-    }
+    // Load all drivers into array
+    $drivers[] = $data;
 }
 
 // 3. DEFINE BADGE FUNCTION
@@ -126,11 +149,37 @@ function getBadge($days, $dateStr, $label)
     return "<div class='badge-cred badge-valid'>{$label}: {$dateStr}</div>";
 }
 
-$pageTitle = "Drivers Management";
+$pageTitle = "Drivers Management - CampusPulse";
 $depth = '../../';
-include $depth . 'layout/admin_header.php';
+include $depth . 'layout/admin/header.php';
+
+// PREPARE MODAL MESSAGES BASED ON URL GET PARAMS
+$swalConfig = null;
+if (isset($_GET['msg'])) {
+    switch ($_GET['msg']) {
+        case 'added':
+            $swalConfig = "icon: 'success', title: 'Success!', text: 'Driver successfully registered!'";
+            break;
+        case 'updated':
+            $swalConfig = "icon: 'success', title: 'Success!', text: 'Driver details updated.'";
+            break;
+        case 'deleted':
+            $swalConfig = "icon: 'success', title: 'Deleted', text: 'Driver has been removed from the system.'";
+            break;
+        case 'active':
+            $swalConfig = "icon: 'warning', title: 'Action Denied', text: 'Cannot delete an active driver. Please deactivate them first.'";
+            break;
+        case 'assigned_error':
+            $swalConfig = "icon: 'warning', title: 'Action Denied', text: 'You must unassign the shuttle before deleting this driver.'";
+            break;
+        case 'error':
+        default:
+            $swalConfig = "icon: 'error', title: 'Oops!', text: 'An unexpected error occurred.'";
+    }
+}
 ?>
 
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
     <style>
         .badge-cred {
@@ -260,6 +309,10 @@ include $depth . 'layout/admin_header.php';
             display: none !important;
         }
 
+        .driver-card.search-hidden {
+            display: none !important;
+        }
+
         .driver-card:hover {
             transform: translateY(-2px);
             box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
@@ -338,7 +391,7 @@ include $depth . 'layout/admin_header.php';
     </style>
 
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-                    <h2 class="page-title">Fleet HR & Compliance</h2>
+                    <h2 class="page-title">Drivers Management</h2>
                     <a href="add_driver.php" class="btn btn-primary"><i class="fas fa-user-plus"></i> Add Driver</a>
                 </div>
 
@@ -398,42 +451,13 @@ include $depth . 'layout/admin_header.php';
                 </div>
 
                 <div class="card" style="margin-bottom: 20px; padding: 15px;">
-                    <form method="GET" style="display: flex; gap: 10px;">
-                        <input type="text" name="search" class="form-control"
-                            placeholder="Search by Name, ID, or Shuttle..." value="<?= htmlspecialchars($search) ?>"
-                            style="margin: 0; flex: 1;" id="searchInput">
-                        <button type="submit" class="btn btn-primary"><i class="fas fa-search"></i> Search</button>
-                        <?php if ($search): ?><a href="drivers_management.php" class="btn"
-                                style="background: #eee; color: #333; display: flex; align-items: center;">Reset</a><?php endif; ?>
-                    </form>
-                </div>
-
-                <?php if (isset($_GET['msg'])): ?>
-                    <div
-                        style="padding:15px; margin-bottom:20px; border-radius:6px; color:white; background: <?= ($_GET['msg'] === 'deleted' || $_GET['msg'] === 'error') ? '#e74c3c' : '#2ecc71' ?>;">
-                        <?php
-                        switch ($_GET['msg']) {
-                            case 'added':
-                                echo "Driver successfully registered!";
-                                break;
-                            case 'updated':
-                                echo "Driver details updated.";
-                                break;
-                            case 'deleted':
-                                echo "Driver deleted.";
-                                break;
-                            case 'active':
-                                echo "Cannot delete active driver. Deactivate first.";
-                                break;
-                            case 'assigned_error':
-                                echo "Unassign shuttle before deleting.";
-                                break;
-                            default:
-                                echo "An error occurred.";
-                        }
-                        ?>
+                    <div style="display: flex; gap: 10px; align-items: center; border: 1px solid #cbd5e1; padding: 5px 15px; border-radius: 8px; background: white; transition: 0.2s;" id="searchBoxContainer">
+                        <i class="fas fa-search" style="color: #94a3b8; font-size: 1.1rem;"></i>
+                        <input type="text" id="searchInput" class="form-control"
+                            placeholder="Search Name, ID, or Shuttle..."
+                            style="margin: 0; flex: 1; border: none; box-shadow: none; outline: none; background: transparent; font-size: 0.95rem;">
                     </div>
-                <?php endif; ?>
+                </div>
 
                 <div class="driver-card-grid" id="driverGrid">
                     <div id="filterEmptyMessage"
@@ -442,7 +466,7 @@ include $depth . 'layout/admin_header.php';
                             style="font-size: 3rem; color: #ddd; margin-bottom: 15px;"></i>
                         <h3 id="emptyMessageTitle" style="margin:0; color: #555;">All caught up!</h3>
                         <p id="emptyMessageDesc" style="color: #888; margin-top: 5px;">No drivers match this filter.</p>
-                        <button class="btn" style="margin-top:15px; background:#eee;" onclick="toggleFilter('all')">View
+                        <button class="btn" style="margin-top:15px; background:#eee;" onclick="if(typeof toggleFilter === 'function') toggleFilter('all'); document.getElementById('searchInput').value = ''; document.getElementById('searchInput').dispatchEvent(new Event('input'));">View
                             All Drivers</button>
                     </div>
 
@@ -462,6 +486,10 @@ include $depth . 'layout/admin_header.php';
                                         <?= htmlspecialchars($driver['id']) ?></div>
                                     <div style="font-size:0.85rem; color:#777;"><i class="fas fa-phone"></i>
                                         <?= htmlspecialchars($driver['phone_number']) ?></div>
+                                    
+                                    <div style="font-size:0.85rem; color:#f39c12; font-weight:600; margin-top:3px;">
+                                        <i class="fas fa-star"></i> <?= (isset($driver['rating']) && $driver['rating'] > 0) ? number_format((float)$driver['rating'], 1) . ' / 5.0' : 'Unrated' ?>
+                                    </div>
                                 </div>
                             </div>
 
@@ -477,7 +505,9 @@ include $depth . 'layout/admin_header.php';
                                             style="flex:1; padding:6px; font-size:0.9rem; margin:0;">
                                             <option value="">-- None --</option>
                                             <?php foreach ($shuttles as $sid): ?>
-                                                <option value="<?= $sid ?>" <?= ($driver['assigned_shuttle_id'] ?? '') === $sid ? 'selected' : '' ?>><?= $sid ?></option>
+                                                <?php if (!in_array($sid, $assignedShuttles) || ($driver['assigned_shuttle_id'] ?? '') === $sid): ?>
+                                                    <option value="<?= $sid ?>" <?= ($driver['assigned_shuttle_id'] ?? '') === $sid ? 'selected' : '' ?>><?= $sid ?></option>
+                                                <?php endif; ?>
                                             <?php endforeach; ?>
                                         </select>
                                         <button class="btn" style="padding:6px 10px; background:#e0e0e0;"
@@ -605,17 +635,17 @@ include $depth . 'layout/admin_header.php';
                 <div style="display:flex; gap:10px;">
                     <button class="btn btn-primary" id="btnApproveReview"
                         style="flex:1; padding: 12px; background: #2ecc71; border: none; font-weight: 600;"
-                        onclick="reviewDriverAction('approve')" onchange="showGlobalLoader('Approving Documents...');">
+                        onclick="showGlobalLoader('Approving Documents...'); reviewDriverAction('approve');">
                         <i class="fas fa-check-circle"></i> Approve Documents
                     </button>
                     <button class="btn btn-primary" id="btnRejectReview"
                         style="flex:1; padding: 12px; background: #e74c3c; border: none; font-weight: 600;"
-                        onclick="reviewDriverAction('reject')" onchange="showGlobalLoader('Rejecting Documents...');">
+                        onclick="reviewDriverAction('reject')">
                         <i class="fas fa-times-circle"></i> Reject Documents
                     </button>
                     <button class="btn btn-primary" id="btnConfirmReject"
                         style="display:none; flex:1; padding: 12px; background: #c0392b; border: none; font-weight: 600;"
-                        onclick="submitRejectReview()">
+                        onclick="showGlobalLoader('Rejecting Documents...'); submitRejectReview();">
                         <i class="fas fa-exclamation-triangle"></i> Confirm Reject
                     </button>
                 </div>
@@ -648,4 +678,86 @@ include $depth . 'layout/admin_header.php';
 
     <script>const driverDataset = <?= json_encode($drivers) ?>;</script>
     <script src="manage_driver.js?v=<?= time() ?>"></script>
-<?php include $depth . 'layout/admin_footer.php'; ?>
+    
+    <script>
+        // NEW: SweetAlert Trigger for PHP URL parameters
+        <?php if ($swalConfig): ?>
+            document.addEventListener('DOMContentLoaded', function() {
+                Swal.fire({
+                    <?= $swalConfig ?>,
+                    confirmButtonColor: '#3b82f6',
+                    timer: 4000,
+                    timerProgressBar: true
+                });
+                
+                // Cleans the URL bar so the modal doesn't pop up again if they refresh
+                window.history.replaceState(null, null, window.location.pathname);
+            });
+        <?php endif; ?>
+
+        document.getElementById('searchInput').addEventListener('input', function(e) {
+            const query = e.target.value.toLowerCase().trim();
+            const cards = document.querySelectorAll('.driver-card');
+            
+            const container = document.getElementById('searchBoxContainer');
+            if (query.length > 0) {
+                container.style.borderColor = '#3b82f6';
+                container.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
+            } else {
+                container.style.borderColor = '#cbd5e1';
+                container.style.boxShadow = 'none';
+            }
+
+            cards.forEach(card => {
+                const name = card.querySelector('.driver-name-text').innerText.toLowerCase();
+                const id = card.getAttribute('data-driver-id').toLowerCase();
+                const shuttleSelect = card.querySelector('select');
+                const shuttle = shuttleSelect ? shuttleSelect.value.toLowerCase() : '';
+
+                if (query.length > 0) {
+                    if (name.includes(query) || id.includes(query) || shuttle.includes(query)) {
+                        card.classList.remove('search-hidden');
+                        // THE FIX: Force the card to break out of the pagination limit!
+                        card.classList.remove('hidden'); 
+                    } else {
+                        card.classList.add('search-hidden');
+                    }
+                } else {
+                    card.classList.remove('search-hidden');
+                }
+            });
+            
+            if (query.length === 0) {
+                // If search is cleared, hand control back to the pagination logic
+                if (typeof applyPagination === 'function') applyPagination();
+            } else {
+                // If searching, aggressively hide the "Load More" button
+                const loadBtn = document.getElementById('loadMoreContainer');
+                if (loadBtn) loadBtn.style.display = 'none';
+            }
+
+            checkEmptySearchState();
+        });
+
+        function checkEmptySearchState() {
+            const cards = document.querySelectorAll('.driver-card');
+            let hasVisible = false;
+            
+            cards.forEach(card => {
+                if (!card.classList.contains('hidden') && !card.classList.contains('search-hidden')) {
+                    hasVisible = true;
+                }
+            });
+            
+            const emptyMsg = document.getElementById('filterEmptyMessage');
+            if (emptyMsg) {
+                emptyMsg.style.display = hasVisible ? 'none' : 'block';
+                if (!hasVisible) {
+                    document.getElementById('emptyMessageTitle').innerText = "No matches found";
+                    document.getElementById('emptyMessageDesc').innerText = "Try adjusting your search query or switching category tabs.";
+                }
+            }
+        }
+    </script>
+
+<?php include $depth . 'layout/admin/footer.php'; ?>

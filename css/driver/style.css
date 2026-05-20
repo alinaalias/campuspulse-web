@@ -1,0 +1,133 @@
+/* ==========================================================================
+   CampusPulse — Driver Global Stylesheet
+   Shared classes used across multiple driver-facing pages.
+   Page-specific styles remain inline in their respective PHP files.
+   ========================================================================== */
+
+/* Base Body */
+body.driver-body {
+    background-color: #f4f6f9;
+    font-family: 'Poppins', sans-serif;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Driver Header Banner */
+.driver-header {
+    padding: 30px 20px 80px 20px;
+    background: linear-gradient(135deg, var(--primary-blue), #0d3c78);
+    color: white;
+    border-bottom-left-radius: 30px;
+    border-bottom-right-radius: 30px;
+    position: relative;
+    z-index: 10;
+    box-shadow: 0 10px 30px rgba(16, 76, 151, 0.2);
+}
+
+/* Status Pill (Online/Offline toggle) */
+.status-pill {
+    transition: all 0.3s ease;
+    user-select: none;
+}
+
+.status-pill:active {
+    transform: scale(0.95);
+}
+
+/* Main Content Container */
+.driver-container {
+    margin-top: -50px;
+    padding: 0 20px 100px 20px;
+    position: relative;
+    z-index: 20;
+}
+
+/* App Card (base white card) */
+.app-card {
+    background: white;
+    border-radius: 20px;
+    padding: 20px;
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.04);
+    border: 1px solid rgba(0, 0, 0, 0.02);
+    margin-bottom: 20px;
+}
+
+/* Section Header */
+.section-header {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #4a5568;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Massive Action Buttons */
+.btn-massive {
+    width: 100%;
+    padding: 18px;
+    border-radius: 14px;
+    font-size: 1.15rem;
+    font-weight: 700;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    transition: all 0.2s;
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.1);
+    color: white;
+    text-decoration: none;
+}
+
+.btn-massive:active {
+    transform: scale(0.96);
+}
+
+.btn-massive.green {
+    background: #27ae60;
+}
+
+.btn-massive.blue {
+    background: var(--primary-blue);
+}
+
+.btn-massive.yellow {
+    background: #f39c12;
+}
+
+.btn-massive.dark {
+    background: #2d3748;
+}
+
+.btn-massive.red {
+    background: #e74c3c;
+    box-shadow: 0 6px 15px rgba(231, 76, 60, 0.2);
+}
+
+/* Action Area (card footer with buttons) */
+.action-area {
+    padding: 20px;
+    background: #fafafa;
+    border-top: 1px solid #edf2f7;
+}
+
+/* Dashboard Section Spacing */
+.dashboard-section {
+    margin-bottom: 25px;
+}
+
+/* Slide Up Animation (reused in report sheet, modals) */
+@keyframes slideUp {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}

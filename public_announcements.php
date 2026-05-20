@@ -162,7 +162,7 @@ usort($activeAnnouncements, function ($a, $b) {
 
 <body>
 
-    <?php include 'layout/public_header.php'; ?>
+    <?php include 'layout/public/header.php'; ?>
 
     <div class="page-header">
         <h1><i class="fas fa-broadcast-tower"></i> Campus Updates</h1>

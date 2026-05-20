@@ -25,7 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Cascading safety block
         if ($action === 'maintenance') {
             $updateData['is_online'] = false;
-            $updateData['job_status'] = 'Idle';
+            $updateData['job_status'] = 'idle';
         }
 
         try {

@@ -2,7 +2,7 @@
 .env
 vendor/
 config.php
-*.json
+service-account.json
 
 
 # Ignore OS generated files

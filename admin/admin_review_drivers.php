@@ -46,7 +46,8 @@ function getSignedUrl($bucket, $filePath)
 }
 
 $pageTitle = 'Review Driver Applications - CampusPulse';
-include '../layout/admin_header.php';
+$depth = '../';
+include $depth . 'layout/admin/header.php';
 ?>
 
 <style>
@@ -319,4 +320,4 @@ include '../layout/admin_header.php';
 </div>
 </div>
 </div>
-<?php include '../layout/admin_footer.php'; ?>
+<?php include $depth . 'layout/admin/footer.php'; ?>

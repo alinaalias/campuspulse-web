@@ -1,5 +1,6 @@
 <?php
 session_start();
+date_default_timezone_set('Asia/Kuala_Lumpur');
 require_once '../config.php';
 
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'driver') {
@@ -10,16 +11,23 @@ $id = $_GET['id'] ?? '';
 $status = $_GET['status'] ?? '';
 $driverId = $_SESSION['user_id'];
 
-$validStatuses = ['arriving', 'onboard', 'completed', 'cancelled'];
+// THE FIX 2: Added 'arrived' to the list of valid statuses
+$validStatuses = ['arriving', 'arrived', 'onboard', 'completed', 'cancelled'];
 
 if ($id && in_array($status, $validStatuses)) {
     $db = $firestore->database();
 
     // 1. Update the Booking
-    $db->collection('Bookings')->document($id)->update([
+    $updateFields = [
         ['path' => 'status', 'value' => $status],
         ['path' => 'updated_at', 'value' => date('Y-m-d H:i:s')]
-    ]);
+    ];
+
+    if ($status === 'onboard') {
+        $updateFields[] = ['path' => 'check_in_time', 'value' => date('Y-m-d H:i:s')];
+    }
+
+    $db->collection('Bookings')->document($id)->update($updateFields);
 
     // 2. If 'completed', check if we need to set the shuttle to IDLE
     if ($status === 'completed' || $status === 'cancelled') {
@@ -37,18 +45,20 @@ if ($id && in_array($status, $validStatuses)) {
             if ($shuttleId) {
                 try {
                     $db->collection('Shuttles')->document($shuttleId)->update([
-                        ['path' => 'job_status', 'value' => 'Idle']
+                        ['path' => 'job_status', 'value' => 'idle']
                     ]);
-                } catch (Exception $e) {}
+                } catch (Exception $e) {
+                }
             }
         }
-        
+
         // --- CLEAR CURRENT TRIP ID ---
         try {
             $db->collection('Staffs')->document($driverId)->update([
                 ['path' => 'current_trip_id', 'value' => '']
             ]);
-        } catch (Exception $e) {}
+        } catch (Exception $e) {
+        }
     }
 }
 

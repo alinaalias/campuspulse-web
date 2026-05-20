@@ -56,7 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $pageTitle = "Edit Stop";
 $depth = '../../';
-include $depth . 'layout/admin_header.php';
+include $depth . 'layout/admin/header.php';
 ?>
 
 
@@ -95,4 +95,4 @@ include $depth . 'layout/admin_header.php';
         </div>
     </form>
 </div>
-<?php include $depth . 'layout/admin_footer.php'; ?>
+<?php include $depth . 'layout/admin/footer.php'; ?>

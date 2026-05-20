@@ -369,7 +369,7 @@ if (!empty($documents)) {
 
 <body class="schedule-body">
 
-    <?php include 'layout/public_header.php'; ?>
+    <?php include 'layout/public/header.php'; ?>
 
     <div class="search-header">
         <h1>Find Your Shuttle</h1>

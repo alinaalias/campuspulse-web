@@ -105,10 +105,10 @@ try {
 </style>
 
 <nav id="sidebar">
-    <div class="sidebar-header">
-        <h3 style="color:white; font-weight:700; margin:0; letter-spacing:1px;">
-            Campus<span style="color:var(--accent-yellow)">Pulse</span>
-        </h3>
+    <div class="sidebar-header"
+        style="display: flex; align-items: center; justify-content: center; background-color: #ffffff">
+        <img src="<?= isset($depth) ? $depth : '' ?>img/CampusPulse Logo.png" alt="CampusPulse Logo"
+            style="max-height: 200px; width: auto; object-fit: contain;">
     </div>
 
     <?php $path = isset($depth) ? $depth : '../'; ?>

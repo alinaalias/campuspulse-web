@@ -63,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $pageTitle = 'Add Route';
 $depth = '../../';
-include $depth . 'layout/admin_header.php';
+include $depth . 'layout/admin/header.php';
 ?>
 <style>
     .stop-item {
@@ -325,7 +325,6 @@ include $depth . 'layout/admin_header.php';
                 <label style="font-weight:600;">Service Type</label>
                 <select name="service_type" class="form-control" required>
                     <option value="scheduled">Scheduled</option>
-                    <option value="on_demand">On Demand</option>
                 </select>
             </div>
         </div>
@@ -408,4 +407,4 @@ include $depth . 'layout/admin_header.php';
         </div>
     </form>
 </div>
-<?php include $depth . 'layout/admin_footer.php'; ?>
+<?php include $depth . 'layout/admin/footer.php'; ?>

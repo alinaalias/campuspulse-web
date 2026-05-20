@@ -3,7 +3,7 @@ session_start();
 date_default_timezone_set('Asia/Kuala_Lumpur');
 require_once '../config.php';
 
-// 1. Security Check
+
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'driver') {
     header('Location: ../login.php');
     exit();
@@ -19,7 +19,7 @@ if (!$rawId) {
 
 $db = $firestore->database();
 
-// GATEKEEPER - Admin Status Check & Compliance
+// Gatekeeper - Admin Status Check & Compliance
 $driverSnap = $db->collection('Staffs')->document($driverId)->snapshot();
 $driverData = $driverSnap->data();
 
@@ -54,8 +54,9 @@ $capacity = 13;
 $shuttleId = '';
 $bookingStatus = '';
 $passengerName = 'Student';
+$currentStopIndex = 0;
 
-// 3. SMART DATA LOADING
+
 if (strpos($rawId, 'SCHED:') === 0) {
     $tripType = 'schedule';
     $scheduleId = substr($rawId, 6);
@@ -69,8 +70,8 @@ if (strpos($rawId, 'SCHED:') === 0) {
     }
 
     $tripData = $schedSnap->data();
+    $currentStopIndex = $tripData['current_stop_index'] ?? 0;
 
-    // The Bouncer & Auto-Active
     if (($tripData['status'] ?? '') === 'completed') {
         echo "<script>alert('Trip already completed'); window.location.href='driver_dashboard.php';</script>";
         exit();
@@ -79,14 +80,16 @@ if (strpos($rawId, 'SCHED:') === 0) {
         echo "<script>alert('This trip was cancelled'); window.location.href='driver_dashboard.php';</script>";
         exit();
     }
+    if (($tripData['driver_id'] ?? '') !== $driverId) {
+        echo "<script>alert('This trip has been transferred to a replacement driver.'); window.location.href='driver_dashboard.php';</script>";
+        exit();
+    }
 
-    // --- FIXED: STRICT 15-MINUTE BUFFER (900 seconds) ---
     $tripDateTimeStr = ($tripData['date'] ?? '') . ' ' . ($tripData['departure_time'] ?? '');
     $tripTimestamp = strtotime($tripDateTimeStr);
     $bufferSeconds = 900;
 
     if ($tripTimestamp && (time() > ($tripTimestamp + $bufferSeconds))) {
-        // Auto-clean DB to "missed" if it was left hanging in "published" or "scheduled"
         if (!in_array(($tripData['status'] ?? ''), ['missed', 'completed', 'cancelled', 'active'])) {
             try {
                 $schedRef->update([['path' => 'status', 'value' => 'missed']]);
@@ -96,9 +99,7 @@ if (strpos($rawId, 'SCHED:') === 0) {
         echo "<script>alert('This scheduled trip has expired and is now marked as Missed.'); window.location.href='driver_trip_history.php';</script>";
         exit();
     }
-    // -----------------------------------------
 
-    // FIX: Also look for 'published' from auto_generate script!
     if (in_array(($tripData['status'] ?? ''), ['scheduled', 'published'])) {
         $tripDate = $tripData['date'] ?? '';
         if ($tripDate > date('Y-m-d')) {
@@ -108,6 +109,12 @@ if (strpos($rawId, 'SCHED:') === 0) {
         try {
             $schedRef->update([['path' => 'status', 'value' => 'active']]);
             $tripData['status'] = 'active';
+
+            if (!empty($tripData['shuttle_id'])) {
+                $db->collection('Shuttles')->document($tripData['shuttle_id'])->update([
+                    ['path' => 'job_status', 'value' => 'in job']
+                ]);
+            }
         } catch (Exception $e) {
         }
     }
@@ -137,9 +144,10 @@ if (strpos($rawId, 'SCHED:') === 0) {
             }
         }
     } else {
-        // Fallback for static routes
         $routeSnap = $db->collection('Routes')->document($tripData['route_id'])->snapshot();
-        $stopIds = $routeSnap->exists() ? ($routeSnap->data()['stop_ids'] ?? []) : [];
+        $rawStopIds = $routeSnap->exists() ? ($routeSnap->data()['stop_ids'] ?? []) : [];
+        $stopIds = array_values(array_unique($rawStopIds)); 
+
         foreach ($stopIds as $sid) {
             $sSnap = $db->collection('Stops')->document($sid)->snapshot();
             if ($sSnap->exists()) {
@@ -156,6 +164,18 @@ if (strpos($rawId, 'SCHED:') === 0) {
         }
     }
 
+    if (!empty($tripData['rescue_lat']) && $tripData['rescue_lat'] !== 'N/A' && !empty($tripData['rescue_lng']) && $tripData['rescue_lng'] !== 'N/A') {
+        $rescueStop = [
+            'id' => 'RESCUE',
+            'name' => 'Breakdown Location (Rescue Passengers)',
+            'lat' => (float) $tripData['rescue_lat'],
+            'lng' => (float) $tripData['rescue_lng'],
+            'eta' => 'URGENT',
+            'type' => 'pickup'
+        ];
+        array_splice($stopsData, $currentStopIndex, 0, [$rescueStop]);
+    }
+
 } elseif (strpos($rawId, 'BOOK:') === 0) {
     $tripType = 'ondemand';
     $bookingId = substr($rawId, 5);
@@ -169,13 +189,14 @@ if (strpos($rawId, 'SCHED:') === 0) {
 
     $tripData = $bookingSnap->data();
 
-    // The Bouncer
     if (($tripData['status'] ?? '') === 'completed') {
         echo "<script>alert('Trip already completed'); window.location.href='driver_dashboard.php';</script>";
         exit();
     }
 
     $bookingStatus = $tripData['status'];
+    // THE FIX: Explicitly capture Shuttle ID so JS can release it if cancelled
+    $shuttleId = $tripData['shuttle_id'] ?? $driverData['assigned_shuttle_id'] ?? '';
 
     if (!empty($tripData['user_id'])) {
         $stSnap = $db->collection('Students')->document($tripData['user_id'])->snapshot();
@@ -222,419 +243,63 @@ if (strpos($rawId, 'SCHED:') === 0) {
 }
 
 $seatsLeft = max(0, $capacity - $bookedCount);
+
+$pageTitle = 'Active Trip';
+$hideNavbar = true;
+$extraHead = '
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+<style>
+    body, html { margin: 0; padding: 0; height: 100%; font-family: Poppins, sans-serif; overflow: hidden; background: #f4f6f9; }
+    #map { width: 100%; height: 80%; position: absolute; top: 0; left: 0; z-index: 1; }
+    .top-bar { position: absolute; top: 20px; left: 20px; right: 20px; z-index: 10; display: flex; justify-content: space-between; align-items: flex-start; }
+    .btn-round { width: 45px; height: 45px; border-radius: 50%; background: white; color: #333; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15); text-decoration: none; font-size: 1.2rem; cursor: pointer; border: none; }
+    .nav-trigger { background: #4285F4; color: white; border: none; padding: 12px 20px; border-radius: 30px; font-weight: 600; box-shadow: 0 4px 15px rgba(66, 133, 244, 0.4); display: flex; align-items: center; gap: 8px; text-decoration: none; font-size: 0.95rem; margin-top: 10px; }
+    .control-card { position: absolute; bottom: 0; left: 0; width: 100%; height: 25%; background: white; border-top-left-radius: 25px; border-top-right-radius: 25px; box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.15); z-index: 10; display: flex; flex-direction: column; }
+    .drag-handle { width: 40px; height: 5px; background: #e0e0e0; border-radius: 5px; margin: 15px auto; pointer-events: none; }
+    .content-scroll { overflow-y: auto; flex: 1; padding: 0 25px 20px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+    .ins-header { font-size: 0.8rem; color: #888; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; }
+    .ins-title { font-size: 1.4rem; font-weight: 700; color: #2d3748; margin: 5px 0 15px; line-height: 1.2; }
+    .card-tabs { display: flex; background: #f1f3f5; border-radius: 12px; margin-bottom: 20px; padding: 4px; }
+    .card-tab { flex: 1; text-align: center; padding: 10px; font-size: 0.85rem; font-weight: 600; color: #718096; border-radius: 8px; cursor: pointer; transition: 0.2s; }
+    .card-tab.active { background: white; color: var(--primary-blue); box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05); }
+    .trip-log-container { display: flex; flex-direction: column; gap: 10px; padding-bottom: 20px; }
+    .log-entry { display: flex; align-items: flex-start; gap: 12px; padding: 12px; background: #f8f9fa; border-radius: 10px; border-left: 3px solid #cbd5e0; }
+    .log-entry.check-in { border-left-color: #2ecc71; background: #e8f8f5; }
+    .log-entry.check-out { border-left-color: #e74c3c; background: #fdedec; } 
+    .log-entry.system-log { border-left-color: #3498db; }
+    .log-time { font-size: 0.75rem; color: #a0aec0; font-weight: 600; min-width: 45px; margin-top: 2px; }
+    .log-msg { font-size: 0.9rem; color: #2d3748; font-weight: 500; line-height: 1.3; flex: 1; }
+    .log-msg b { font-weight: 700; }
+    .stats-row { display: flex; justify-content: space-between; text-align: center; background: #f8f9fa; border-radius: 12px; padding: 12px; margin-bottom: 20px; }
+    .stats-row>div { flex: 1; }
+    .stats-row>div:not(:last-child) { border-right: 1px solid #e0e0e0; }
+    .timeline { margin: 15px 0; padding-left: 15px; position: relative; }
+    .timeline::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; background: #e2e8f0; }
+    .stop-item { position: relative; margin-bottom: 25px; padding-left: 20px; }
+    .stop-item:last-child { margin-bottom: 0; }
+    .s-dot { position: absolute; left: -21px; top: 1px; width: 14px; height: 14px; border-radius: 50%; background: white; border: 3px solid #cbd5e0; box-sizing: border-box; }
+    .s-text { font-weight: 600; color: #4a5568; font-size: 1.05rem; }
+    .s-meta { font-size: 0.8rem; color: #a0aec0; }
+    .s-active .s-dot { border-color: #3498db; background: #3498db; box-shadow: 0 0 0 4px rgba(52, 152, 219, 0.2); }
+    .s-active .s-text { color: #3498db; font-weight: 700; }
+    .s-done .s-dot { border-color: #2ecc71; background: #2ecc71; }
+    .s-done .s-text { color: #718096; text-decoration: line-through; }
+    .bottom-actions { padding: 15px 25px; background: white; border-top: 1px solid #f1f3f5; }
+    .btn-massive { width: 100%; padding: 18px; border-radius: 16px; font-size: 1.15rem; font-weight: 700; border: none; color: white; display: flex; align-items: center; justify-content: center; gap: 10px; box-shadow: 0 6px 15px rgba(0, 0, 0, 0.1); cursor: pointer; transition: 0.2s; }
+    .btn-massive:active { transform: scale(0.96); }
+    .btn-massive.blue { background: #3498db; }
+    .btn-massive.green { background: #2ecc71; }
+    .btn-massive.red { background: #e74c3c; box-shadow: 0 6px 15px rgba(231, 76, 60, 0.2); }
+    .qr-btn { position: absolute; right: 20px; bottom: calc(25% + 20px); width: 60px; height: 60px; border-radius: 50%; background: #2c3e50; color: white; display: flex; align-items: center; justify-content: center; font-size: 1.8rem; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3); z-index: 10; cursor: pointer; border: none; }
+    #scanModal { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.9); z-index: 9999; flex-direction: column; justify-content: center; align-items: center; }
+    #reader { width: 320px; border-radius: 16px; overflow: hidden; background: #000; }
+    #toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #2ecc71; color: white; padding: 12px 25px; border-radius: 30px; font-weight: 600; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2); opacity: 0; transition: opacity 0.3s; z-index: 10000; display: flex; align-items: center; gap: 8px; pointer-events: none; }
+    #cancelAlert { display: none; position: fixed; inset: 0; background: #e74c3c; color: white; z-index: 99999; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 30px; }
+</style>';
+include '../layout/driver/header.php';
 ?>
-<!DOCTYPE html>
-<html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Active Trip</title>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
-    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
-    <style>
-        body,
-        html {
-            margin: 0;
-            padding: 0;
-            height: 100%;
-            font-family: 'Poppins', sans-serif;
-            overflow: hidden;
-            background: #f4f6f9;
-        }
-
-        /* Map Layer */
-        #map {
-            width: 100%;
-            height: 80%;
-            position: absolute;
-            top: 0;
-            left: 0;
-            z-index: 1;
-        }
-
-        /* Top Bar Controls */
-        .top-bar {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            right: 20px;
-            z-index: 10;
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-        }
-
-        .btn-round {
-            width: 45px;
-            height: 45px;
-            border-radius: 50%;
-            background: white;
-            color: #333;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
-            text-decoration: none;
-            font-size: 1.2rem;
-            cursor: pointer;
-            border: none;
-        }
-
-        .nav-trigger {
-            background: #4285F4;
-            color: white;
-            border: none;
-            padding: 12px 20px;
-            border-radius: 30px;
-            font-weight: 600;
-            box-shadow: 0 4px 15px rgba(66, 133, 244, 0.4);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            text-decoration: none;
-            font-size: 0.95rem;
-            margin-top: 10px;
-        }
-
-        /* Draggable Control Card */
-        .control-card {
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            height: 25%;
-            /* Default Start Height */
-            background: white;
-            border-top-left-radius: 25px;
-            border-top-right-radius: 25px;
-            box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.15);
-            z-index: 10;
-            display: flex;
-            flex-direction: column;
-            /* Transition is managed dynamically in JS */
-        }
-
-        .drag-handle {
-            width: 40px;
-            height: 5px;
-            background: #e0e0e0;
-            border-radius: 5px;
-            margin: 15px auto;
-            pointer-events: none;
-        }
-
-        /* Scrollable Content Area */
-        .content-scroll {
-            overflow-y: auto;
-            flex: 1;
-            padding: 0 25px 20px;
-            -webkit-overflow-scrolling: touch;
-            /* Smooth iOS scrolling */
-            overscroll-behavior: contain;
-            /* Prevents scroll chaining */
-        }
-
-        .ins-header {
-            font-size: 0.8rem;
-            color: #888;
-            text-transform: uppercase;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-        }
-
-        .ins-title {
-            font-size: 1.4rem;
-            font-weight: 700;
-            color: #2d3748;
-            margin: 5px 0 15px;
-            line-height: 1.2;
-        }
-
-        /* Tabs & Trip Log */
-        .card-tabs {
-            display: flex;
-            background: #f1f3f5;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            padding: 4px;
-        }
-
-        .card-tab {
-            flex: 1;
-            text-align: center;
-            padding: 10px;
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: #718096;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: 0.2s;
-        }
-
-        .card-tab.active {
-            background: white;
-            color: var(--primary-blue);
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
-        }
-
-        .trip-log-container {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            padding-bottom: 20px;
-        }
-
-        .log-entry {
-            display: flex;
-            align-items: flex-start;
-            gap: 12px;
-            padding: 12px;
-            background: #f8f9fa;
-            border-radius: 10px;
-            border-left: 3px solid #cbd5e0;
-        }
-
-        .log-entry.check-in {
-            border-left-color: #2ecc71;
-            background: #e8f8f5;
-        }
-
-        .log-entry.system-log {
-            border-left-color: #3498db;
-        }
-
-        .log-time {
-            font-size: 0.75rem;
-            color: #a0aec0;
-            font-weight: 600;
-            min-width: 45px;
-            margin-top: 2px;
-        }
-
-        .log-msg {
-            font-size: 0.9rem;
-            color: #2d3748;
-            font-weight: 500;
-            line-height: 1.3;
-            flex: 1;
-        }
-
-        .log-msg b {
-            font-weight: 700;
-        }
-
-        /* Stats Row */
-        .stats-row {
-            display: flex;
-            justify-content: space-between;
-            text-align: center;
-            background: #f8f9fa;
-            border-radius: 12px;
-            padding: 12px;
-            margin-bottom: 20px;
-        }
-
-        .stats-row>div {
-            flex: 1;
-        }
-
-        .stats-row>div:not(:last-child) {
-            border-right: 1px solid #e0e0e0;
-        }
-
-        /* Timeline Fixes */
-        .timeline {
-            margin: 15px 0;
-            padding-left: 15px;
-            position: relative;
-        }
-
-        .timeline::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 8px;
-            bottom: 8px;
-            width: 2px;
-            background: #e2e8f0;
-        }
-
-        .stop-item {
-            position: relative;
-            margin-bottom: 25px;
-            padding-left: 20px;
-        }
-
-        .stop-item:last-child {
-            margin-bottom: 0;
-        }
-
-        .s-dot {
-            position: absolute;
-            left: -21px;
-            top: 1px;
-            width: 14px;
-            height: 14px;
-            border-radius: 50%;
-            background: white;
-            border: 3px solid #cbd5e0;
-            box-sizing: border-box;
-            /* THIS FIXES THE HALF-BULLET BUG */
-        }
-
-        .s-text {
-            font-weight: 600;
-            color: #4a5568;
-            font-size: 1.05rem;
-        }
-
-        .s-meta {
-            font-size: 0.8rem;
-            color: #a0aec0;
-        }
-
-        .s-active .s-dot {
-            border-color: #3498db;
-            background: #3498db;
-            box-shadow: 0 0 0 4px rgba(52, 152, 219, 0.2);
-        }
-
-        .s-active .s-text {
-            color: #3498db;
-            font-weight: 700;
-        }
-
-        .s-done .s-dot {
-            border-color: #2ecc71;
-            background: #2ecc71;
-        }
-
-        .s-done .s-text {
-            color: #718096;
-            text-decoration: line-through;
-        }
-
-        /* Bottom Actions */
-        .bottom-actions {
-            padding: 15px 25px;
-            background: white;
-            border-top: 1px solid #f1f3f5;
-        }
-
-        .btn-massive {
-            width: 100%;
-            padding: 18px;
-            border-radius: 16px;
-            font-size: 1.15rem;
-            font-weight: 700;
-            border: none;
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.1);
-            cursor: pointer;
-            transition: 0.2s;
-        }
-
-        .btn-massive:active {
-            transform: scale(0.96);
-        }
-
-        .btn-massive.blue {
-            background: #3498db;
-        }
-
-        .btn-massive.green {
-            background: #2ecc71;
-        }
-
-        .btn-massive.red {
-            background: #e74c3c;
-            box-shadow: 0 6px 15px rgba(231, 76, 60, 0.2);
-        }
-
-        /* Floating QR Button */
-        .qr-btn {
-            position: absolute;
-            right: 20px;
-            bottom: calc(25% + 20px);
-            width: 60px;
-            height: 60px;
-            border-radius: 50%;
-            background: #2c3e50;
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.8rem;
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
-            z-index: 10;
-            cursor: pointer;
-            border: none;
-        }
-
-        /* Modals & Alerts */
-        #scanModal {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(0, 0, 0, 0.9);
-            z-index: 9999;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-        }
-
-        #reader {
-            width: 320px;
-            border-radius: 16px;
-            overflow: hidden;
-            background: #000;
-        }
-
-        #toast {
-            position: fixed;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: #2ecc71;
-            color: white;
-            padding: 12px 25px;
-            border-radius: 30px;
-            font-weight: 600;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-            opacity: 0;
-            transition: opacity 0.3s;
-            z-index: 10000;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            pointer-events: none;
-        }
-
-        #cancelAlert {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: #e74c3c;
-            color: white;
-            z-index: 99999;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            text-align: center;
-            padding: 30px;
-        }
-    </style>
-</head>
-
-<body>
 
     <div id="toast"><i class="fas fa-check-circle"></i> <span id="toastMsg">Success</span></div>
 
@@ -731,7 +396,7 @@ $seatsLeft = max(0, $capacity - $bookedCount);
         let map, directionsService, directionsRenderer;
         let currentLocation = null;
         let optimizedStops = [];
-        let currentTargetIndex = 0;
+        let currentTargetIndex = <?= $currentStopIndex ?>;
         let wakeLock = null;
 
         async function requestWakeLock() {
@@ -771,26 +436,52 @@ $seatsLeft = max(0, $capacity - $bookedCount);
                 if (doc.exists) {
                     const status = doc.data().status;
                     if (status === 'cancelled') {
+                        // THE FIX: Automatically release the shuttle and clear driver state if student cancels
+                        const sId = "<?= htmlspecialchars($shuttleId) ?>";
+                        const dId = "<?= htmlspecialchars($driverId) ?>";
+                        
+                        if (sId) {
+                            firestore.collection('Shuttles').doc(sId).update({ job_status: 'idle' }).catch(e => {});
+                        }
+                        if (dId) {
+                            firestore.collection('Staffs').doc(dId).update({ current_trip_id: '' }).catch(e => {});
+                        }
+
                         document.getElementById('cancelAlert').style.display = 'flex';
                     } else if (status === 'completed') {
-                        // The student marked the trip as complete
-                        window.location.href = `trip_history_detail.php?id=BOOK:${bookingId}&type=ondemand&completed=true`;
+                        window.location.href = `trip_history_detail.php?id=${bookingId}&type=ondemand&completed=true`;
                     }
                 }
             });
         }
 
+        function updateFirestoreIndex(index) {
+            const docId = rawId.startsWith('SCHED:') ? rawId.substring(6) : rawId.substring(5);
+            const collection = tripType === 'schedule' ? 'Schedules' : 'Bookings';
+            firestore.collection(collection).doc(docId).update({
+                current_stop_index: index
+            }).catch(e => console.error("Error saving index", e));
+        }
+
         function calculateRoute() {
             if (stopsData.length < 2) return;
+            let activeStops = stopsData.slice(currentTargetIndex);
+
+            if (activeStops.length < 2 && currentTargetIndex > 0) {
+                activeStops = stopsData.slice(currentTargetIndex - 1);
+            }
+            if (activeStops.length < 2) return;
+
             let waypoints = [];
-            for (let i = 1; i < stopsData.length - 1; i++) {
+            for (let i = 1; i < activeStops.length - 1; i++) {
                 waypoints.push({
-                    location: (stopsData[i].lat && stopsData[i].lng) ? new google.maps.LatLng(stopsData[i].lat, stopsData[i].lng) : { query: stopsData[i].name },
+                    location: (activeStops[i].lat && activeStops[i].lng) ? new google.maps.LatLng(activeStops[i].lat, activeStops[i].lng) : { query: activeStops[i].name },
                     stopover: true
                 });
             }
-            const origin = stopsData[0];
-            const dest = stopsData[stopsData.length - 1];
+
+            const origin = activeStops[0];
+            const dest = activeStops[activeStops.length - 1];
             const originLoc = (origin.lat && origin.lng) ? new google.maps.LatLng(origin.lat, origin.lng) : origin.name;
             const destLoc = (dest.lat && dest.lng) ? new google.maps.LatLng(dest.lat, dest.lng) : dest.name;
 
@@ -798,7 +489,7 @@ $seatsLeft = max(0, $capacity - $bookedCount);
                 origin: originLoc,
                 destination: destLoc,
                 waypoints: waypoints,
-                optimizeWaypoints: true,
+                optimizeWaypoints: false,
                 travelMode: 'DRIVING',
                 drivingOptions: {
                     departureTime: new Date(),
@@ -807,10 +498,18 @@ $seatsLeft = max(0, $capacity - $bookedCount);
             }, (res, status) => {
                 if (status === 'OK') {
                     directionsRenderer.setDirections(res);
-                    buildStopSequence(res.routes[0].waypoint_order);
+                    let newActiveStops = [activeStops[0]];
+                    let intermediate = activeStops.slice(1, activeStops.length - 1);
+                    res.routes[0].waypoint_order.forEach(index => newActiveStops.push(intermediate[index]));
+                    newActiveStops.push(activeStops[activeStops.length - 1]);
+
+                    let pastStops = stopsData.slice(0, stopsData.length - activeStops.length);
+                    optimizedStops = pastStops.concat(newActiveStops);
+
+                    renderUI();
 
                     try {
-                        let targetLeg = res.routes[0].legs[currentTargetIndex];
+                        let targetLeg = res.routes[0].legs[0];
                         if (targetLeg) {
                             const liveEtaText = targetLeg.duration_in_traffic ? targetLeg.duration_in_traffic.text : targetLeg.duration.text;
                             updateLiveEtaToDatabase(liveEtaText);
@@ -829,23 +528,9 @@ $seatsLeft = max(0, $capacity - $bookedCount);
             }).catch(e => { });
         }
 
-        function buildStopSequence(order) {
-            optimizedStops = [stopsData[0]];
-            let intermediate = stopsData.slice(1, stopsData.length - 1);
-            order.forEach(index => optimizedStops.push(intermediate[index]));
-            optimizedStops.push(stopsData[stopsData.length - 1]);
-
-            if (tripType === 'ondemand') {
-                if (onDemandStatus === 'confirmed' || onDemandStatus === 'arriving') currentTargetIndex = 0;
-                else if (onDemandStatus === 'onboard') currentTargetIndex = 1;
-            } else {
-                let savedIndex = localStorage.getItem('trip_progress_' + rawId);
-                currentTargetIndex = savedIndex !== null ? parseInt(savedIndex) : 0;
-            }
-            renderUI();
-        }
-
         function renderUI() {
+            if (optimizedStops.length === 0) optimizedStops = stopsData;
+
             const tl = document.getElementById('timelineList');
             tl.innerHTML = '';
 
@@ -869,42 +554,62 @@ $seatsLeft = max(0, $capacity - $bookedCount);
             const btn = document.getElementById('primaryAction');
             const targetStop = optimizedStops[currentTargetIndex];
 
-            if (currentTargetIndex === optimizedStops.length - 1 && btn.innerText.includes("FINISH TRIP")) {
-                addTripLog(`Trip Completed at Final Destination`, 'system');
-                localStorage.removeItem('trip_progress_' + rawId);
-                setTimeout(() => { document.getElementById('finishForm').submit(); }, 300);
-                return;
+            if (btn.innerText.includes("FINISH TRIP") || btn.innerText.includes("FINISH ROUTE") || btn.innerText.includes("SCAN TO FINISH")) {
+
+                if (tripType === 'ondemand' && onDemandStatus === 'onboard') {
+                    showToast(`Please scan passenger QR to check out.`, true);
+                    startScanner();
+                    return;
+                }
+
+                const onboardEl = document.getElementById('uiOnboard');
+                if (onboardEl) {
+                    const onboardCount = parseInt(onboardEl.innerText);
+                    if (onboardCount > 0) {
+                        showToast(`Cannot finish! ${onboardCount} passenger(s) still onboard.`, true);
+                        btn.style.transform = 'translateX(-10px)';
+                        setTimeout(() => btn.style.transform = 'translateX(10px)', 50);
+                        setTimeout(() => btn.style.transform = 'translateX(0)', 100);
+                        return;
+                    }
+                }
+
+                if (currentTargetIndex === optimizedStops.length - 1) {
+                    addTripLog(`Trip Completed at Final Destination`, 'system');
+                    setTimeout(() => { document.getElementById('finishForm').submit(); }, 300);
+                    return;
+                } else {
+                    document.getElementById('finishForm').submit();
+                    return;
+                }
             }
 
             if (tripType === 'schedule') {
                 if (btn.innerText.includes("ARRIVED")) {
-                    updateCardHeaderState("BOARDING", `At ${targetStop.name}. Scan tickets.`);
+                    updateCardHeaderState("BOARDING / ALIGHTING", `At ${targetStop.name}. Scan QR to board or check out.`);
                     btn.className = "btn-massive green";
-                    btn.innerHTML = `FINISH BOARDING <i class="fas fa-door-closed"></i>`;
+                    btn.innerHTML = `DEPART STOP <i class="fas fa-arrow-right"></i>`;
                     addTripLog(`Arrived at <b>${targetStop.name}</b>`, 'system');
-                } else if (btn.innerText.includes("FINISH BOARDING")) {
+                } else if (btn.innerText.includes("DEPART STOP")) {
                     currentTargetIndex++;
-                    localStorage.setItem('trip_progress_' + rawId, currentTargetIndex);
+                    updateFirestoreIndex(currentTargetIndex);
                     addTripLog(`Departed for next stop.`, 'system');
-                    renderUI();
-                } else if (btn.innerText.includes("FINISH ROUTE")) {
-                    localStorage.removeItem('trip_progress_' + rawId);
-                    document.getElementById('finishForm').submit();
+                    calculateRoute();
                 }
             } else {
                 if (onDemandStatus === 'confirmed') {
                     onDemandStatus = 'arriving';
-                    addTripLog(`Arrived at Pickup.`, 'system');
+                    addTripLog(`Heading to Pickup.`, 'system');
                     fetch(`update_booking_status.php?id=${rawId.substring(5)}&status=arriving`);
                     renderUI();
                 } else if (onDemandStatus === 'arriving') {
-                    onDemandStatus = 'onboard';
-                    currentTargetIndex++;
-                    addTripLog(`Trip Started.`, 'system');
-                    fetch(`update_booking_status.php?id=${rawId.substring(5)}&status=onboard`);
+                    onDemandStatus = 'arrived';
+                    addTripLog(`Arrived at Pickup. Waiting for passenger.`, 'system');
+                    fetch(`update_booking_status.php?id=${rawId.substring(5)}&status=arrived`);
                     renderUI();
-                } else {
-                    document.getElementById('finishForm').submit();
+                } else if (onDemandStatus === 'arrived') {
+                    showToast("Please scan passenger QR to start trip.", true);
+                    startScanner();
                 }
             }
         }
@@ -931,14 +636,26 @@ $seatsLeft = max(0, $capacity - $bookedCount);
 
             if (currentTargetIndex === optimizedStops.length - 1) {
                 btn.className = "btn-massive red";
-                btn.innerHTML = `FINISH TRIP <i class="fas fa-flag-checkered"></i>`;
+                if (tripType === 'ondemand') {
+                    btn.innerHTML = `SCAN TO FINISH <i class="fas fa-qrcode"></i>`;
+                } else {
+                    btn.innerHTML = `FINISH TRIP <i class="fas fa-flag-checkered"></i>`;
+                }
             } else if (tripType === 'ondemand') {
                 if (currentTargetIndex === 0) {
-                    btn.className = "btn-massive blue";
-                    btn.innerHTML = `ARRIVED AT PICKUP <i class="fas fa-map-marker-alt"></i>`;
-                } else if (onDemandStatus === 'arriving') {
-                    btn.className = "btn-massive green";
-                    btn.innerHTML = `START TRIP <i class="fas fa-play"></i>`;
+                    if (onDemandStatus === 'confirmed') {
+                        btn.className = "btn-massive blue";
+                        btn.innerHTML = `HEAD TO PICKUP <i class="fas fa-location-arrow"></i>`;
+                    } else if (onDemandStatus === 'arriving') {
+                        btn.className = "btn-massive blue";
+                        btn.innerHTML = `ARRIVED AT PICKUP <i class="fas fa-map-marker-alt"></i>`;
+                    } else if (onDemandStatus === 'arrived') {
+                        btn.className = "btn-massive green";
+                        btn.innerHTML = `SCAN TO START <i class="fas fa-qrcode"></i>`;
+                    } else {
+                        btn.className = "btn-massive blue";
+                        btn.innerHTML = `ARRIVED AT DROPOFF <i class="fas fa-flag-checkered"></i>`;
+                    }
                 } else {
                     btn.className = "btn-massive blue";
                     btn.innerHTML = `ARRIVED AT DROPOFF <i class="fas fa-flag-checkered"></i>`;
@@ -950,18 +667,26 @@ $seatsLeft = max(0, $capacity - $bookedCount);
 
             if (currentSnapState === 'collapsed') {
                 insH.innerText = "ON THE WAY TO: " + targetStop.name.toUpperCase();
-                insT.innerHTML = " ";
+                insT.innerHTML = " ";
             } else {
                 if (currentTargetIndex === optimizedStops.length - 1) {
                     insH.innerText = "FINAL STOP";
                     insT.innerText = targetStop.name;
                 } else if (tripType === 'ondemand') {
                     if (currentTargetIndex === 0) {
-                        insH.innerText = "DRIVE TO PICKUP";
-                        insT.innerHTML = `<i class="fas fa-user"></i> Pick up: ${passengerName}`;
-                    } else if (onDemandStatus === 'arriving') {
-                        insH.innerText = "AT PICKUP";
-                        insT.innerHTML = `Wait for ${passengerName} to board.`;
+                        if (onDemandStatus === 'confirmed') {
+                            insH.innerText = "NEW REQUEST";
+                            insT.innerHTML = `<i class="fas fa-user"></i> Pick up: ${passengerName}`;
+                        } else if (onDemandStatus === 'arriving') {
+                            insH.innerText = "DRIVE TO PICKUP";
+                            insT.innerHTML = `<i class="fas fa-user"></i> Pick up: ${passengerName}`;
+                        } else if (onDemandStatus === 'arrived') {
+                            insH.innerText = "AT PICKUP";
+                            insT.innerHTML = `Wait for ${passengerName} to board.`;
+                        } else {
+                            insH.innerText = "DRIVE TO DROPOFF";
+                            insT.innerText = targetStop.name;
+                        }
                     } else {
                         insH.innerText = "DRIVE TO DROPOFF";
                         insT.innerText = targetStop.name;
@@ -977,13 +702,9 @@ $seatsLeft = max(0, $capacity - $bookedCount);
             if (optimizedStops.length < 2 || currentTargetIndex >= optimizedStops.length) return;
             const btn = document.getElementById('navBtn');
             let destStop = optimizedStops[currentTargetIndex];
-
             let destLoc = (destStop.lat && destStop.lng) ? `${destStop.lat},${destStop.lng}` : encodeURIComponent(destStop.name);
             btn.href = `https://www.google.com/maps/dir/?api=1&destination=${destLoc}&travelmode=driving`;
-
-            btn.onclick = function () {
-                addTripLog(`Navigation started to <b>${destStop.name}</b>`, 'system');
-            };
+            btn.onclick = function () { addTripLog(`Navigation started to <b>${destStop.name}</b>`, 'system'); };
         }
 
         function switchCardTab(tabName) {
@@ -991,14 +712,14 @@ $seatsLeft = max(0, $capacity - $bookedCount);
             document.getElementById('tabBtn-log').classList.remove('active');
             document.getElementById('tabContent-route').style.display = 'none';
             document.getElementById('tabContent-log').style.display = 'none';
-
             document.getElementById('tabBtn-' + tabName).classList.add('active');
             document.getElementById('tabContent-' + tabName).style.display = 'block';
         }
 
-        function renderLogToDOM(message, type, isoString) {
+        function renderLogToDOM(message, type, timeString) {
             const container = document.getElementById('tripLogContainer');
-            const d = new Date(isoString);
+            const safeTime = timeString.replace(' ', 'T');
+            const d = new Date(safeTime);
             const timeStr = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
             let typeClass = type === 'in' ? 'check-in' : (type === 'out' ? 'check-out' : 'system-log');
             container.insertAdjacentHTML('afterbegin', `
@@ -1010,7 +731,6 @@ $seatsLeft = max(0, $capacity - $bookedCount);
         function loadTripLogs() {
             const docId = rawId.startsWith('SCHED:') ? rawId.substring(6) : rawId.substring(5);
             const collection = tripType === 'schedule' ? 'Schedules' : 'Bookings';
-
             firestore.collection(collection).doc(docId).get().then(doc => {
                 if (doc.exists) {
                     const data = doc.data();
@@ -1028,17 +748,20 @@ $seatsLeft = max(0, $capacity - $bookedCount);
         }
 
         function addTripLog(message, type = 'system') {
-            const isoString = new Date().toISOString();
-            renderLogToDOM(message, type, isoString);
+            const tzTime = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kuala_Lumpur" }));
+            const localString = tzTime.getFullYear() + '-' +
+                String(tzTime.getMonth() + 1).padStart(2, '0') + '-' +
+                String(tzTime.getDate()).padStart(2, '0') + ' ' +
+                String(tzTime.getHours()).padStart(2, '0') + ':' +
+                String(tzTime.getMinutes()).padStart(2, '0') + ':' +
+                String(tzTime.getSeconds()).padStart(2, '0');
 
+            renderLogToDOM(message, type, localString);
             const docId = rawId.startsWith('SCHED:') ? rawId.substring(6) : rawId.substring(5);
             const collection = tripType === 'schedule' ? 'Schedules' : 'Bookings';
-
             firestore.collection(collection).doc(docId).update({
                 trip_logs: firebase.firestore.FieldValue.arrayUnion({
-                    message: message,
-                    type: type,
-                    timestamp: isoString
+                    message: message, type: type, timestamp: localString
                 })
             }).catch(err => console.error("Error saving log:", err));
         }
@@ -1052,14 +775,12 @@ $seatsLeft = max(0, $capacity - $bookedCount);
         }
 
         let lastLocationUpdate = 0;
-
         function trackLocation() {
             if ("geolocation" in navigator) {
                 navigator.geolocation.watchPosition((position) => {
                     const lat = position.coords.latitude; const lng = position.coords.longitude;
                     if (!currentLocation) map.panTo({ lat, lng });
                     currentLocation = { lat, lng };
-
                     const now = Date.now();
                     if (now - lastLocationUpdate > 5000) {
                         const fd = new FormData();
@@ -1068,10 +789,8 @@ $seatsLeft = max(0, $capacity - $bookedCount);
                         else fetch('update_location.php', { method: 'POST', body: fd });
                         lastLocationUpdate = now;
                     }
-
                     checkGeofence();
                 }, null, { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 });
-
                 setInterval(() => { if (currentLocation) map.panTo(currentLocation); }, 15000);
                 setInterval(() => { calculateRoute(); }, 180000);
             }
@@ -1081,7 +800,6 @@ $seatsLeft = max(0, $capacity - $bookedCount);
             if (currentTargetIndex >= optimizedStops.length) return;
             const target = optimizedStops[currentTargetIndex];
             if (!target.lat || !target.lng) return;
-
             const dist = haversineDist(currentLocation.lat, currentLocation.lng, parseFloat(target.lat), parseFloat(target.lng));
             const btn = document.getElementById('primaryAction');
             if (dist <= 50 && btn.innerText.includes("ARRIVED")) {
@@ -1092,6 +810,11 @@ $seatsLeft = max(0, $capacity - $bookedCount);
 
         let html5QrcodeScanner;
         function startScanner() {
+            if (tripType === 'ondemand' && onDemandStatus !== 'arrived' && onDemandStatus !== 'onboard') {
+                showToast("Please click ARRIVED AT PICKUP before scanning.", true);
+                return;
+            }
+
             document.getElementById('scanModal').style.display = 'flex';
             html5QrcodeScanner = new Html5Qrcode("reader");
             html5QrcodeScanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, onScanSuccess, (e) => { });
@@ -1121,26 +844,42 @@ $seatsLeft = max(0, $capacity - $bookedCount);
             if (tripType === 'ondemand') {
                 const bookingId = rawId.substring(5);
                 if (scannedBid.includes(bookingId)) {
-                    showToast("Boarded: " + passengerName);
-                    addTripLog(`<b>${passengerName}</b> boarded the shuttle.`, 'in');
-                    stopScanner();
-                    onDemandStatus = 'onboard'; currentTargetIndex++;
-                    fetch(`update_booking_status.php?id=${bookingId}&status=onboard`);
-                    renderUI();
+                    if (onDemandStatus === 'onboard') {
+                        showToast("Checked Out: " + passengerName);
+                        addTripLog(`<b>${passengerName}</b> dropped off.`, 'out');
+                        stopScanner();
+                        setTimeout(() => { document.getElementById('finishForm').submit(); }, 600);
+                    } else {
+                        showToast("Boarded: " + passengerName);
+                        addTripLog(`<b>${passengerName}</b> boarded the shuttle.`, 'in');
+                        stopScanner();
+                        onDemandStatus = 'onboard'; currentTargetIndex++;
+                        fetch(`update_booking_status.php?id=${bookingId}&status=onboard`);
+                        calculateRoute();
+                    }
                 } else {
                     showToast("Invalid QR", true);
                     html5QrcodeScanner.resume();
                 }
             } else {
+                const currentStopId = optimizedStops[currentTargetIndex] ? optimizedStops[currentTargetIndex].id : '';
+
                 fetch('verify_ticket.php', {
                     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: 'booking_id=' + encodeURIComponent(scannedBid) + '&schedule_id=' + encodeURIComponent(rawId.substring(6))
+                    body: 'booking_id=' + encodeURIComponent(scannedBid) +
+                        '&schedule_id=' + encodeURIComponent(rawId.substring(6)) +
+                        '&current_stop_id=' + encodeURIComponent(currentStopId)
                 })
                     .then(res => res.json())
                     .then(data => {
                         if (data.success) {
-                            showToast("Boarded: " + data.student_name);
-                            addTripLog(`<b>${data.student_name}</b> checked in.`, 'in');
+                            if (data.is_checkout) {
+                                showToast("Checked Out: " + data.student_name);
+                                addTripLog(`<b>${data.student_name}</b> checked out of the shuttle.`, 'out');
+                            } else {
+                                showToast("Boarded: " + data.student_name);
+                                addTripLog(`<b>${data.student_name}</b> checked in.`, 'in');
+                            }
                             if (document.getElementById('uiOnboard')) document.getElementById('uiOnboard').innerText = data.new_count;
                         } else {
                             showToast(data.message, true);
@@ -1153,8 +892,10 @@ $seatsLeft = max(0, $capacity - $bookedCount);
         const controlCard = document.getElementById('controlCard');
         const dragArea = document.createElement('div');
         dragArea.style.position = 'absolute';
-        dragArea.style.top = '0'; dragArea.style.left = '0';
-        dragArea.style.width = '100%'; dragArea.style.height = '50px';
+        dragArea.style.top = '0';
+        dragArea.style.left = '0';
+        dragArea.style.width = '100%';
+        dragArea.style.height = '50px';
         dragArea.style.zIndex = '100';
         controlCard.appendChild(dragArea);
 
@@ -1228,6 +969,7 @@ $seatsLeft = max(0, $capacity - $bookedCount);
 
         setTimeout(() => snapToHeight(25), 100);
     </script>
-</body>
-
-</html>
+<?php
+$skipFirebase = true;
+include '../layout/driver/footer.php';
+?>

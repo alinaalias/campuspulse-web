@@ -1,17 +1,16 @@
 <?php
 session_start();
-// FIX: Force the server to use Malaysian time for all date() calculations
 date_default_timezone_set('Asia/Kuala_Lumpur');
 require_once '../config.php';
 
-// 1. Security
+
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'driver') {
     header('Location: ../login.php');
     exit();
 }
 $driverId = $_SESSION['user_id'];
 
-// 2. Fetch Future Schedules
+
 $today = date('Y-m-d');
 $tomorrow = date('Y-m-d', strtotime('+1 day'));
 $currentTime = date('H:i');
@@ -84,20 +83,9 @@ foreach ($documents as $doc) {
         $groupedSchedules[$dateKey] = [];
     $groupedSchedules[$dateKey][] = $data;
 }
+$pageTitle = 'My Schedule';
+include '../layout/driver/header.php';
 ?>
-<!DOCTYPE html>
-<html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>My Schedule</title>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="../css/style.css?v=<?= time() ?>">
-</head>
-
-<body class="driver-body">
 
     <div class="driver-header">
         <div style="width: 100%; display: flex; justify-content: space-between; align-items: center;">
@@ -201,9 +189,6 @@ foreach ($documents as $doc) {
         <?php endif; ?>
     </div>
 
-    <?php include 'preview_modal.php'; ?>
-    <?php include 'driver_navbar.php'; ?>
+    <?php include 'components/preview_modal.php'; ?>
 
-</body>
-
-</html>
+<?php include '../layout/driver/footer.php'; ?>

@@ -27,7 +27,8 @@ if (empty($pickupStopId) || empty($dropoffStopId)) {
 }
 
 // Phase 3: The Haversine Distance Matrix (Helper)
-function haversineDistance($lat1, $lon1, $lat2, $lon2) {
+function haversineDistance($lat1, $lon1, $lat2, $lon2)
+{
     $earthRadius = 6371000; // Radius of Earth in meters
     $dLat = deg2rad($lat2 - $lat1);
     $dLon = deg2rad($lon2 - $lon1);
@@ -35,9 +36,9 @@ function haversineDistance($lat1, $lon1, $lat2, $lon2) {
     $a = sin($dLat / 2) * sin($dLat / 2) +
         cos(deg2rad($lat1)) * cos(deg2rad($lat2)) *
         sin($dLon / 2) * sin($dLon / 2);
-        
+
     $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
-    
+
     return $earthRadius * $c;
 }
 
@@ -66,7 +67,7 @@ try {
     // 2. job_status == 'Idle'
     $shuttlesQuery = $db->collection('Shuttles')
         ->where('is_online', '=', true)
-        ->where('job_status', '=', 'Idle')
+        ->where('job_status', '=', 'idle')
         ->documents();
 
     $closestShuttleId = null;
@@ -79,7 +80,7 @@ try {
 
         if ($shuttleLat !== null && $shuttleLng !== null) {
             $dist = haversineDistance($pickupLat, $pickupLng, $shuttleLat, $shuttleLng);
-            
+
             if ($dist < $shortestDistance) {
                 $shortestDistance = $dist;
                 $closestShuttleId = $shuttle->id();
@@ -112,7 +113,7 @@ try {
     }
 
     // Generate Booking Payload
-    $bookingId = 'BOOK' . strtoupper(uniqid()); 
+    $bookingId = 'BOOK' . strtoupper(uniqid());
 
     $db->collection('Bookings')->document($bookingId)->set([
         'booking_id' => $bookingId,

@@ -1,9 +1,31 @@
 <?php
-require_once 'config.php';
+require_once '../config.php';
 session_start();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $fullName = $_POST['full_name'] ?? '';
+
+    // --- SMART NAME FORMATTING ---
+    $rawName = trim($_POST['full_name'] ?? '');
+    // Split by spaces, automatically handling any accidental double spaces
+    $words = array_filter(explode(' ', strtolower($rawName)));
+    // Common Malaysian name conjunctions to keep lowercase
+    $exceptions = ['bin', 'binti', 'bt', 'bte', 'a/l', 'a/p', 'a/k', 'anak', 's/o', 'd/o'];
+
+    $formattedWords = [];
+    $isFirstWord = true;
+
+    foreach ($words as $word) {
+        if (in_array($word, $exceptions) && !$isFirstWord) {
+            $formattedWords[] = strtolower($word);
+        } else {
+            $formattedWords[] = ucfirst($word);
+        }
+        $isFirstWord = false;
+    }
+
+    $fullName = implode(' ', $formattedWords);
+    // ------------------------------
+
     $icNumber = $_POST['ic_number'] ?? '';
     $gender = $_POST['gender'] ?? '';
     $dob = $_POST['dob'] ?? '';

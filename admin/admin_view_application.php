@@ -54,7 +54,8 @@ function getSignedUrl($bucket, $filePath)
 }
 
 $pageTitle = 'Review Application - CampusPulse';
-include '../layout/admin_header.php';
+$depth = '../';
+include $depth . 'layout/admin/header.php';
 ?>
 
 <style>
@@ -334,7 +335,6 @@ include '../layout/admin_header.php';
 
     <div class="details-grid">
 
-        <!-- Personal Information -->
         <div class="detail-card">
             <h3><i class="fas fa-user"></i> Personal Details</h3>
             <div class="info-row">
@@ -361,7 +361,6 @@ include '../layout/admin_header.php';
             </div>
         </div>
 
-        <!-- Contact Information -->
         <div class="detail-card">
             <h3><i class="fas fa-address-book"></i> Contact Info</h3>
             <div class="info-row">
@@ -382,7 +381,6 @@ include '../layout/admin_header.php';
             </div>
         </div>
 
-        <!-- Driving Credentials -->
         <div class="detail-card">
             <h3><i class="fas fa-id-card"></i> Driving Credentials</h3>
             <div class="info-row">
@@ -404,7 +402,6 @@ include '../layout/admin_header.php';
             </div>
         </div>
 
-        <!-- Declarations -->
         <div class="detail-card">
             <h3><i class="fas fa-check-square"></i> Declarations</h3>
 
@@ -433,7 +430,6 @@ include '../layout/admin_header.php';
             </div>
         </div>
 
-        <!-- Document Links -->
         <div class="detail-card full-width">
             <h3><i class="fas fa-folder-open"></i> Accompanying Documents</h3>
             <div class="docs-grid">
@@ -479,18 +475,15 @@ include '../layout/admin_header.php';
 
     </div>
 
-    <!-- Action Buttons -->
     <?php if (strtolower($applicationData['status'] ?? '') === 'pending'): ?>
         <div class="actions-footer">
             <button type="button" class="btn-action btn-reject" onclick="openRejectModal()">
                 <i class="fas fa-times-circle"></i> Reject
             </button>
 
-            <a href="process_application.php?id=<?= urlencode($applicationId) ?>&action=approve"
-                class="btn-action btn-approve"
-                onclick="return confirm('Are you sure you want to APPROVE this applicant? They will be added to the Drivers list.');">
+            <button type="button" class="btn-action btn-approve" onclick="openApproveModal()">
                 <i class="fas fa-check-circle"></i> Approve
-            </a>
+            </button>
         </div>
     <?php endif; ?>
 
@@ -543,6 +536,33 @@ include '../layout/admin_header.php';
     </div>
 </div>
 
+<div id="approveModal"
+    style="display:none; position:fixed; z-index:2000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.5); align-items:center; justify-content:center;">
+    <div
+        style="background:white; padding:30px; border-radius:12px; width:90%; max-width:500px; box-shadow: 0 10px 30px rgba(0,0,0,0.2);">
+        <h3 style="margin-top:0; color:#28a745; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+            <i class="fas fa-check-circle"></i> Approve Application
+        </h3>
+        <p style="color:#555; font-size: 0.95rem;">Are you sure you want to <strong>APPROVE</strong> this applicant?
+            They will be officially added to the active Drivers list and notified via email.</p>
+
+        <form action="process_application.php" method="POST">
+            <input type="hidden" name="id" value="<?= htmlspecialchars($applicationId) ?>">
+            <input type="hidden" name="action" value="approve">
+
+            <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:20px;">
+                <button type="button"
+                    style="padding: 10px 20px; border-radius: 6px; border: none; background:#eee; color:#333; cursor:pointer; font-weight:600;"
+                    onclick="closeApproveModal()">Cancel</button>
+                <button type="submit"
+                    style="padding: 10px 20px; border-radius: 6px; border: none; background:#28a745; color:white; cursor:pointer; font-weight:600;">
+                    <i class="fas fa-check"></i> Confirm Approval
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
     function openRejectModal() {
         document.getElementById('rejectModal').style.display = 'flex';
@@ -550,6 +570,14 @@ include '../layout/admin_header.php';
 
     function closeRejectModal() {
         document.getElementById('rejectModal').style.display = 'none';
+    }
+
+    function openApproveModal() {
+        document.getElementById('approveModal').style.display = 'flex';
+    }
+
+    function closeApproveModal() {
+        document.getElementById('approveModal').style.display = 'none';
     }
 
     function toggleCustomReason() {
@@ -564,4 +592,4 @@ include '../layout/admin_header.php';
         }
     }
 </script>
-<?php include '../layout/admin_footer.php'; ?>
+<?php include $depth . 'layout/admin/footer.php'; ?>

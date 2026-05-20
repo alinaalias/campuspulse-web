@@ -79,15 +79,35 @@ function confirmStatusChange() {
         .then(res => res.json())
         .then(data => {
             if (data.success) {
-                location.reload();
+                // FIXED: Wait for Swal to close/finish before reloading
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Status Updated',
+                    text: 'The driver status has been successfully updated.',
+                    confirmButtonColor: '#3b82f6',
+                    timer: 2000,
+                    timerProgressBar: true
+                }).then(() => {
+                    location.reload();
+                });
             } else {
-                alert("Error: " + (data.message || "Failed to update status"));
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Update Failed',
+                    text: data.message || "Failed to update status",
+                    confirmButtonColor: '#3b82f6'
+                });
                 closeStatusModal();
             }
         })
         .catch(err => {
             console.error(err);
-            alert("Network Error: Could not reach server.");
+            Swal.fire({
+                icon: 'error',
+                title: 'Network Error',
+                text: 'Could not reach the server. Please check your connection.',
+                confirmButtonColor: '#3b82f6'
+            });
             closeStatusModal();
         });
 }
@@ -122,19 +142,43 @@ function saveAssignment(driverId) {
             try {
                 const data = JSON.parse(text);
                 if (data.success) {
-                    alert("Success! Shuttle assigned.");
-                    location.reload();
+                    // FIXED: Wait for Swal to finish before reloading
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'Assigned!',
+                        text: 'Shuttle successfully assigned to the driver.',
+                        confirmButtonColor: '#3b82f6',
+                        timer: 2000,
+                        timerProgressBar: true
+                    }).then(() => {
+                        location.reload();
+                    });
                 } else {
-                    alert("Error: " + (data.message || "Unknown error occurred"));
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Oops!',
+                        text: data.message || 'Failed to assign shuttle. Please try again.',
+                        confirmButtonColor: '#3b82f6'
+                    });
                     resetSaveButton(saveBtn, select);
                 }
             } catch (e) {
-                alert("Server Error: Invalid response format. Check console.");
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Server Error',
+                    text: 'Invalid response format. Check console.',
+                    confirmButtonColor: '#3b82f6'
+                });
                 resetSaveButton(saveBtn, select);
             }
         })
         .catch(error => {
-            alert("Network Error");
+            Swal.fire({
+                icon: 'error',
+                title: 'Network Error',
+                text: 'Could not reach the server.',
+                confirmButtonColor: '#3b82f6'
+            });
             resetSaveButton(saveBtn, select);
         });
 }
@@ -152,7 +196,12 @@ let currentReviewDriverId = null;
 
 function openHrModal(driverId) {
     if (typeof driverDataset === 'undefined') {
-        alert("System error: Driver dataset not loaded.");
+        Swal.fire({
+            icon: 'error',
+            title: 'System Error',
+            text: 'Driver dataset not loaded.',
+            confirmButtonColor: '#3b82f6'
+        });
         return;
     }
 
@@ -223,7 +272,13 @@ function reviewDriverAction(actionType) {
 function submitRejectReview() {
     const reason = document.getElementById('reviewRejectReason').value.trim();
     if (!reason) {
-        alert("Please provide a rejection reason.");
+        Swal.fire({
+            icon: 'warning',
+            title: 'Missing Information',
+            text: 'Please provide a rejection reason.',
+            confirmButtonColor: '#3b82f6'
+        });
+        if (typeof hideGlobalLoader === 'function') hideGlobalLoader();
         return;
     }
     processDriverReview('reject', reason);
@@ -240,14 +295,35 @@ function processDriverReview(action, reason) {
         .then(res => res.json())
         .then(data => {
             if (data.success) {
-                alert(data.message || "Review processed successfully.");
-                location.reload();
+                // FIXED: Wait for Swal to finish before reloading
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Review Complete',
+                    text: data.message || "Review processed successfully.",
+                    confirmButtonColor: '#3b82f6',
+                    timer: 2000,
+                    timerProgressBar: true
+                }).then(() => {
+                    location.reload();
+                });
             } else {
-                alert("Error: " + (data.message || "Failed to process review"));
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Action Failed',
+                    text: data.message || "Failed to process review",
+                    confirmButtonColor: '#3b82f6'
+                });
+                if (typeof hideGlobalLoader === 'function') hideGlobalLoader();
             }
         })
         .catch(err => {
-            alert("Network Error: Could not reach server.");
+            Swal.fire({
+                icon: 'error',
+                title: 'Network Error',
+                text: 'Could not reach server.',
+                confirmButtonColor: '#3b82f6'
+            });
+            if (typeof hideGlobalLoader === 'function') hideGlobalLoader();
         });
 }
 
@@ -278,6 +354,10 @@ function applyPagination() {
     if (cards.length === 0) return;
     let visibleTotal = 0;
 
+    // Check if there is an active search happening
+    const searchInput = document.getElementById('searchInput');
+    const isSearching = searchInput && searchInput.value.trim().length > 0;
+
     cards.forEach(card => {
         let passesFilter = true;
         if (currentFilter === 'active' && card.dataset.active !== 'true') passesFilter = false;
@@ -289,7 +369,8 @@ function applyPagination() {
             card.classList.add('hidden');
         } else {
             visibleTotal++;
-            if (visibleTotal <= displayedCount) {
+            // THE FIX: Bypass the 10-card limit if the user is actively searching
+            if (isSearching || visibleTotal <= displayedCount) {
                 card.classList.remove('hidden');
             } else {
                 card.classList.add('hidden');
@@ -316,7 +397,7 @@ function applyPagination() {
     }).length;
 
     if (totalMatching === 0) {
-        if (emptyMsgDiv) {
+        if (emptyMsgDiv && !isSearching) { // Let the search bar handle its own empty state
             emptyMsgDiv.style.display = 'block';
             if (currentFilter === 'critical') {
                 emptyTitle.innerText = "Excellent Compliance!";
@@ -328,9 +409,11 @@ function applyPagination() {
         }
         loadBtn.style.display = 'none';
     } else {
-        if (emptyMsgDiv) emptyMsgDiv.style.display = 'none';
+        if (emptyMsgDiv && !isSearching) emptyMsgDiv.style.display = 'none';
 
-        if (totalMatching > displayedCount) {
+        if (isSearching) {
+            loadBtn.style.display = 'none'; // Never show 'Load More' while searching
+        } else if (totalMatching > displayedCount) {
             loadBtn.style.display = 'block';
             if (buttonNode) buttonNode.style.display = 'inline-block';
             if (countText) countText.innerText = `Showing ${displayedCount} of ${totalMatching}`;

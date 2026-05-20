@@ -1,8 +1,8 @@
 <?php
 session_start();
-require_once '../config.php'; // This loads $firestore and $bucket
+require_once '../config.php';
 
-// 1. Security Check
+
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'driver') {
     header('Location: ../login.php');
     exit();
@@ -21,7 +21,7 @@ $isSuspended = ($driver['status'] ?? '') === 'suspended';
 $msg = "";
 $error = "";
 
-// --- Calculate Expiry Days for UI ---
+// Calculate Expiry Days for UI
 $todayDate = new DateTime('today');
 $licObj = !empty($driver['license_expiry']) ? new DateTime($driver['license_expiry']) : null;
 $psvObj = !empty($driver['psv_expiry']) ? new DateTime($driver['psv_expiry']) : null;
@@ -29,17 +29,16 @@ $psvObj = !empty($driver['psv_expiry']) ? new DateTime($driver['psv_expiry']) : 
 $licDays = $licObj ? (int) $todayDate->diff($licObj)->format('%r%a') : null;
 $psvDays = $psvObj ? (int) $todayDate->diff($psvObj)->format('%r%a') : null;
 
-// --- Fetch Live Driver Rating ---
-// Fetches the true average rating calculated and saved by driver_ratings.php
+// Fetch Live Driver Rating
 $rawRating = $driver['rating'] ?? 0;
 $driverRating = ($rawRating > 0) ? number_format((float) $rawRating, 1) : 'New';
-// -----------------------------------------
 
-// 2. HANDLE FORM SUBMISSION
+
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $updates = [];
 
-    // A. Handle Image Upload
+
     if (isset($_FILES['profile_pic']) && $_FILES['profile_pic']['error'] === 0) {
         $allowed = ['jpg', 'jpeg', 'png'];
         $filename = $_FILES['profile_pic']['name'];
@@ -180,7 +179,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// 3. GENERATE SECURE IMAGE URLS
+
 $picPath = $driver['profile_pic'] ?? 'default.png';
 $displayUrl = "https://via.placeholder.com/150?text=No+Image";
 if ($picPath !== 'default.png' && !empty($picPath)) {
@@ -214,265 +213,39 @@ $statusBadgeMap = [
 ];
 $badge = $statusBadgeMap[$driver['status'] ?? 'inactive'];
 
+$pageTitle = 'Driver Profile';
+$extraHead = '
+<style>
+    .profile-container { margin-top: -50px; padding: 0 20px 100px 20px; position: relative; z-index: 20; }
+    .profile-card { background: white; border-radius: 20px; padding: 24px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.05); margin-bottom: 20px; position: relative; }
+    .profile-upload-container { position: absolute; top: -50px; left: 50%; transform: translateX(-50%); width: 100px; height: 100px; }
+    .profile-img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; border: 4px solid white; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1); background: white; }
+    .camera-btn { position: absolute; bottom: 0; right: -5px; background: var(--primary-blue); color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); border: 2px solid white; }
+    #fileInput { display: none; }
+    .status-badge { display: inline-block; padding: 5px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.5px; }
+    .section-title { font-size: 0.95rem; color: var(--primary-blue); font-weight: 700; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .info-row { display: flex; margin-bottom: 15px; align-items: center; }
+    .info-icon { width: 35px; height: 35px; border-radius: 10px; background: rgba(52, 152, 219, 0.1); color: var(--primary-blue); display: flex; align-items: center; justify-content: center; margin-right: 15px; }
+    .info-content { flex: 1; }
+    .info-label { font-size: 0.7rem; color: #888; text-transform: uppercase; font-weight: 600; }
+    .info-value { font-size: 0.95rem; font-weight: 500; color: #333; }
+    .form-control-custom { width: 100%; padding: 12px 15px; border: 1px solid #e0e0e0; border-radius: 12px; font-size: 0.9rem; margin-top: 5px; transition: all 0.2s; font-family: inherit; }
+    .form-control-custom:focus { border-color: var(--primary-blue); outline: none; box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1); }
+    .file-upload-box { border: 2px dashed #ddd; padding: 15px; text-align: center; border-radius: 12px; background: white; margin-top: 5px; position: relative; }
+    .file-upload-box input[type="file"] { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+    .readonly-mode .form-control-custom { background-color: transparent !important; border-color: transparent !important; padding: 0 !important; color: #333; font-weight: 500; pointer-events: none; }
+    .readonly-mode .file-upload-box { display: none !important; }
+    .edit-mode .current-doc-img { display: none !important; }
+    .current-doc-img img { width: 100%; height: 120px; object-fit: cover; border-radius: 12px; border: 1px solid #eee; margin-top: 8px; }
+    .input-expired { border-color: #e74c3c !important; background-color: #fdedec !important; }
+    .input-warning { border-color: #f39c12 !important; background-color: #fef9e7 !important; }
+    .compliance-section { background: #f8f9fa; border: 1px solid #e2e8f0; }
+    .hr-modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(3px); z-index: 9999; align-items: center; justify-content: center; }
+</style>';
+include '../layout/driver/header.php';
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Driver Profile</title>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap"
-        rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="../css/style.css">
-
-    <style>
-        .driver-header {
-            padding: 30px 20px 80px 20px;
-            background: linear-gradient(135deg, var(--primary-blue), #0d3c78);
-            color: white;
-            border-bottom-left-radius: 30px;
-            border-bottom-right-radius: 30px;
-            position: relative;
-            z-index: 10;
-        }
-
-        .profile-container {
-            margin-top: -50px;
-            padding: 0 20px 100px 20px;
-            position: relative;
-            z-index: 20;
-        }
-
-        .profile-card {
-            background: white;
-            border-radius: 20px;
-            padding: 24px;
-            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.05);
-            margin-bottom: 20px;
-            position: relative;
-        }
-
-        .profile-upload-container {
-            position: absolute;
-            top: -50px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 100px;
-            height: 100px;
-        }
-
-        .profile-img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            border-radius: 50%;
-            border: 4px solid white;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-            background: white;
-        }
-
-        .camera-btn {
-            position: absolute;
-            bottom: 0;
-            right: -5px;
-            background: var(--primary-blue);
-            color: white;
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-            border: 2px solid white;
-        }
-
-        #fileInput {
-            display: none;
-        }
-
-        .status-badge {
-            display: inline-block;
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-        }
-
-        .section-title {
-            font-size: 0.95rem;
-            color: var(--primary-blue);
-            font-weight: 700;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .info-row {
-            display: flex;
-            margin-bottom: 15px;
-            align-items: center;
-        }
-
-        .info-icon {
-            width: 35px;
-            height: 35px;
-            border-radius: 10px;
-            background: rgba(52, 152, 219, 0.1);
-            color: var(--primary-blue);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-right: 15px;
-        }
-
-        .info-content {
-            flex: 1;
-        }
-
-        .info-label {
-            font-size: 0.7rem;
-            color: #888;
-            text-transform: uppercase;
-            font-weight: 600;
-        }
-
-        .info-value {
-            font-size: 0.95rem;
-            font-weight: 500;
-            color: #333;
-        }
-
-        .form-control-custom {
-            width: 100%;
-            padding: 12px 15px;
-            border: 1px solid #e0e0e0;
-            border-radius: 12px;
-            font-size: 0.9rem;
-            margin-top: 5px;
-            transition: all 0.2s;
-            font-family: inherit;
-        }
-
-        .form-control-custom:focus {
-            border-color: var(--primary-blue);
-            outline: none;
-            box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
-        }
-
-        .file-upload-box {
-            border: 2px dashed #ddd;
-            padding: 15px;
-            text-align: center;
-            border-radius: 12px;
-            background: white;
-            margin-top: 5px;
-            position: relative;
-        }
-
-        .file-upload-box input[type="file"] {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            opacity: 0;
-            cursor: pointer;
-        }
-
-        /* Edit & Read Mode Styles */
-        .readonly-mode .form-control-custom {
-            background-color: transparent !important;
-            border-color: transparent !important;
-            padding: 0 !important;
-            color: #333;
-            font-weight: 500;
-            pointer-events: none;
-        }
-
-        .readonly-mode .file-upload-box {
-            display: none !important;
-        }
-
-        .edit-mode .current-doc-img {
-            display: none !important;
-        }
-
-        .current-doc-img img {
-            width: 100%;
-            height: 120px;
-            object-fit: cover;
-            border-radius: 12px;
-            border: 1px solid #eee;
-            margin-top: 8px;
-        }
-
-        .input-expired {
-            border-color: #e74c3c !important;
-            background-color: #fdedec !important;
-        }
-
-        .input-warning {
-            border-color: #f39c12 !important;
-            background-color: #fef9e7 !important;
-        }
-
-        .compliance-section {
-            background: #f8f9fa;
-            border: 1px solid #e2e8f0;
-        }
-
-        /* --- Modal Overlay Styles --- */
-        .hr-modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.6);
-            /* Dark transparent background */
-            backdrop-filter: blur(3px);
-            /* Nice blur effect */
-            z-index: 9999;
-            align-items: center;
-            justify-content: center;
-        }
-
-        @keyframes slideUp {
-            from {
-                transform: translateY(20px);
-                opacity: 0;
-            }
-
-            to {
-                transform: translateY(0);
-                opacity: 1;
-            }
-        }
-    </style>
-</head>
-
-<body class="driver-body">
-
-    <div id="pushPrompt"
-        style="display:none; background: #34495e; color: white; padding: 15px; text-align: center; z-index: 9999; position: relative;">
-        <span style="margin-right: 15px; font-size: 0.9rem;">Enable Push Notifications to receive real-time
-            updates.</span>
-        <button onclick="requestPushPermissions()"
-            style="background:#2ecc71; color:white; border:none; padding:6px 12px; border-radius:6px; font-weight:600; cursor:pointer;">Enable</button>
-    </div>
-
     <div class="driver-header">
-        <!-- <div style="font-size: 0.8rem; opacity: 0.8; text-transform: uppercase; letter-spacing: 1px;">Driver Access
-        </div> -->
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: 700;">
             <?= $isForcedSetup ? 'Account Setup' : 'My Profile' ?>
         </h2>
@@ -505,6 +278,15 @@ $badge = $statusBadgeMap[$driver['status'] ?? 'inactive'];
                 </div>
             </div>
 
+            <?php if ($isForcedSetup && empty($_POST)): ?>
+                <div
+                    style="background:#e8f4fd; color:#0d3c78; padding:15px; margin-bottom:20px; border-radius:12px; border:1px solid #b8daff;">
+                    <h4 style="margin:0 0 5px 0; font-size:1rem;"><i class="fas fa-camera"></i> Profile Setup Required</h4>
+                    <p style="margin:0; font-size:0.85rem;">You must tap the camera icon above to upload a profile picture
+                        before you can access the dashboard.</p>
+                </div>
+            <?php endif; ?>
+
             <?php if ($requiresComplianceUpdate || $isPendingReview || $isSuspended): ?>
                 <div id="accountLockedBanner"
                     style="background:#fff3cd; color:#856404; padding:15px; margin-bottom:20px; border-radius:12px; border:1px solid #ffeeba;">
@@ -522,12 +304,6 @@ $badge = $statusBadgeMap[$driver['status'] ?? 'inactive'];
                             your account.
                         <?php endif; ?>
                     </p>
-                    <?php if (!empty($driver['last_status_change_reason'])): ?>
-                        <!--<div
-                            style="margin-top:10px; background: rgba(255,255,255,0.5); padding: 8px; border-radius: 6px; font-size:0.8rem;">
-                            <strong>Admin Note:</strong> <?= htmlspecialchars($driver['last_status_change_reason']) ?>
-                        </div>-->
-                    <?php endif; ?>
                 </div>
             <?php endif; ?>
 
@@ -724,172 +500,115 @@ $badge = $statusBadgeMap[$driver['status'] ?? 'inactive'];
         </form>
 
         <?php if (!$isForcedSetup && !$requiresComplianceUpdate): ?>
-            <a href="#" onclick="showLogoutModal(event)"
+            <a href="../logout.php"
                 style="display:block; text-align:center; padding: 15px; border-radius:12px; background:#fff; color:#e74c3c; text-decoration:none; font-weight:600; border:1px solid #ffccd5;">
                 <i class="fas fa-sign-out-alt"></i> Log Out
             </a>
             <div style="padding-bottom: 50px;"></div>
         <?php endif; ?>
 
-        <div id="logoutModal" class="hr-modal-overlay" style="display:none; z-index: 9999;"
-            onclick="if(event.target === this) closeLogoutModal()">
-            <div class="hr-modal"
-                style="max-width: 320px; text-align: center; padding: 30px 20px; background: white; border-radius: 20px; animation: slideUp 0.3s ease;">
-                <div
-                    style="width: 60px; height: 60px; background: #fdedec; color: #e74c3c; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.8rem; margin: 0 auto 15px;">
-                    <i class="fas fa-sign-out-alt"></i>
-                </div>
-                <h3 style="margin: 0 0 10px; color: #2d3748; font-size: 1.3rem;">Ready to leave?</h3>
-                <p style="color: #718096; font-size: 0.9rem; margin-bottom: 25px;">Are you sure you want to log out of
-                    your
-                    account?</p>
-                <div style="display: flex; gap: 10px;">
-                    <button type="button"
-                        style="flex: 1; background: #edf2f7; color: #4a5568; padding: 12px; border-radius: 12px; font-weight: 600; border: none; cursor: pointer;"
-                        onclick="closeLogoutModal()">Cancel</button>
-                    <a href="../logout.php"
-                        style="flex: 1; background: #e74c3c; color: white; padding: 12px; border-radius: 12px; font-weight: 600; text-decoration: none; border: none; display: flex; align-items: center; justify-content: center;">Log
-                        Out</a>
-                </div>
-            </div>
-        </div>
     </div>
 
-    <?php if (!$isForcedSetup && !$requiresComplianceUpdate): ?>
-        <?php include 'driver_navbar.php'; ?>
-    <?php endif; ?>
+<?php
+if ($isForcedSetup || $requiresComplianceUpdate) {
+    $hideNavbar = true;
+}
 
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
-    <script>
-        const firebaseConfig = {
-            apiKey: "<?= MAPS_API_KEY ?? '' ?>",
-            authDomain: "<?= FIREBASE_AUTH_DOMAIN ?? '' ?>",
-            projectId: "<?= FIREBASE_PROJECT_ID ?? '' ?>",
-            storageBucket: "<?= FIREBASE_STORAGE_BUCKET ?? '' ?>",
-            messagingSenderId: "<?= FIREBASE_MESSAGING_SENDER_ID ?? '' ?>",
-            appId: "<?= FIREBASE_APP_ID ?? '' ?>"
-        };
-        if (!firebase.apps.length) {
-            firebase.initializeApp(firebaseConfig);
-        }
+$extraScripts = '<script>';
 
-        // --- HTTPS CHECK ---
-        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-            console.warn('[CampusPulse] Push Notifications require HTTPS. Alerts may be blocked on this origin.');
-        }
-
-        function firePushNotification(title, body, url = 'driver_notifications.php') {
-            if (Notification.permission !== 'granted') return;
-            try {
-                let notif = new Notification(title, { body: body, icon: '../img/favicon.ico' });
-                notif.onclick = function () {
-                    window.location.href = url; // Redirect when clicked
-                };
-                if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
-            } catch (e) {
-                console.warn('[CampusPulse] Notification error:', e);
-            }
-        }
-
-        function requestPushPermissions() {
-            if (!('Notification' in window)) return;
-            Notification.requestPermission().then(permission => {
-                if (permission === 'granted') {
-                    document.getElementById('pushPrompt').style.display = 'none';
-                    console.log('[CampusPulse] Push notifications enabled.');
-                }
-            });
-        }
-
+if ($isForcedSetup && empty($_POST)) {
+    $extraScripts .= '
         document.addEventListener("DOMContentLoaded", function () {
-            if ('Notification' in window && Notification.permission === 'default') {
-                document.getElementById('pushPrompt').style.display = 'block';
-            }
+            Swal.fire({
+                icon: "info",
+                title: "Welcome to CampusPulse!",
+                text: "Before you can start accepting rides, please tap the camera icon to upload a profile picture.",
+                confirmButtonColor: "#262562",
+                confirmButtonText: "Understood",
+                backdrop: "rgba(0,0,0,0.6)"
+            });
+        });';
+}
 
+$extraScripts .= '
+        document.addEventListener("DOMContentLoaded", function () {
             const db = firebase.firestore();
-            const driverId = "<?= $driverId ?>";
+            const driverId = "' . $driverId . '";
             const sessionStartTime = Date.now();
             let initialStaffLoad = true;
 
-            // --- STAFFS DOC WATCHER: approve/reject real-time UI sync ---
             db.collection("Staffs").doc(driverId).onSnapshot((doc) => {
                 if (!doc.exists) return;
                 if (initialStaffLoad) { initialStaffLoad = false; return; }
 
                 const data = doc.data();
-                if (data.status === 'active') {
-                    const banner = document.getElementById('accountLockedBanner');
-                    if (banner) banner.style.display = 'none';
-                    const btn = document.getElementById('submitBtn');
-                    if (btn) { btn.innerHTML = '<i class="fas fa-save"></i> Submit Updates'; btn.style.background = 'var(--primary-blue)'; }
+                if (data.status === "active") {
+                    const banner = document.getElementById("accountLockedBanner");
+                    if (banner) banner.style.display = "none";
+                    const btn = document.getElementById("submitBtn");
+                    if (btn) { btn.innerHTML = \'<i class="fas fa-save"></i> Submit Updates\'; btn.style.background = "var(--primary-blue)"; }
 
-                    setTimeout(() => { window.location.href = 'driver_dashboard.php'; }, 2000);
-                } else if (data.status === 'suspended' || data.status === 'inactive') {
+                    setTimeout(() => { window.location.href = "driver_dashboard.php"; }, 2000);
+                } else if (data.status === "suspended" || data.status === "inactive") {
                     location.reload();
                 }
             });
 
-            // --- NOTIFICATIONS COLLECTION WATCHER ---
             db.collection("Notifications").where("user_id", "==", driverId)
                 .onSnapshot((snapshot) => {
                     snapshot.docChanges().forEach((change) => {
-                        if (change.type !== 'added') return;
+                        if (change.type !== "added") return;
                         const data = change.doc.data();
-                        const notifTime = new Date(data.created_at.replace(' ', 'T')).getTime();
-                        // Only Push if it's a NEW notification created after the page loaded
+                        const notifTime = new Date(data.created_at.replace(" ", "T")).getTime();
                         if (notifTime > sessionStartTime) {
-                            firePushNotification('CampusPulse Notification', data.message || data.title);
+                            firePushNotification("CampusPulse Notification", data.message || data.title);
                         }
                     });
                 });
         });
 
-        // UI Toggles
         function toggleEdit(sectionId) {
             const section = document.getElementById(sectionId);
-            const btn = section.querySelector('button');
+            const btn = section.querySelector("button");
 
-            if (section.classList.contains('readonly-mode')) {
-                section.classList.remove('readonly-mode');
-                section.classList.add('edit-mode');
-                btn.innerHTML = '<i class="fas fa-times"></i> Cancel';
-                btn.style.color = '#e74c3c';
+            if (section.classList.contains("readonly-mode")) {
+                section.classList.remove("readonly-mode");
+                section.classList.add("edit-mode");
+                btn.innerHTML = \'<i class="fas fa-times"></i> Cancel\';
+                btn.style.color = "#e74c3c";
 
-                // Show specific warnings or icons
-                if (sectionId === 'complianceSection') {
-                    document.getElementById('complianceWarning').style.display = 'block';
+                if (sectionId === "complianceSection") {
+                    document.getElementById("complianceWarning").style.display = "block";
                 }
-                if (sectionId === 'securitySection') {
-                    document.getElementById('passwordInput').placeholder = "Enter new password";
-                    document.getElementById('toggleIcon').style.display = 'block';
+                if (sectionId === "securitySection") {
+                    document.getElementById("passwordInput").placeholder = "Enter new password";
+                    document.getElementById("toggleIcon").style.display = "block";
                 }
 
-                const inputs = section.querySelectorAll('input, textarea');
-                inputs.forEach(i => i.removeAttribute('readonly'));
+                const inputs = section.querySelectorAll("input, textarea");
+                inputs.forEach(i => i.removeAttribute("readonly"));
             } else {
-                section.classList.add('readonly-mode');
-                section.classList.remove('edit-mode');
-                btn.innerHTML = '<i class="fas fa-edit"></i> Edit';
-                btn.style.color = sectionId === 'complianceSection' ? '#333' : 'var(--primary-blue)';
+                section.classList.add("readonly-mode");
+                section.classList.remove("edit-mode");
+                btn.innerHTML = \'<i class="fas fa-edit"></i> Edit\';
+                btn.style.color = sectionId === "complianceSection" ? "#333" : "var(--primary-blue)";
 
-                if (sectionId === 'complianceSection') {
-                    document.getElementById('complianceWarning').style.display = 'none';
+                if (sectionId === "complianceSection") {
+                    document.getElementById("complianceWarning").style.display = "none";
                 }
-                if (sectionId === 'securitySection') {
-                    document.getElementById('passwordInput').placeholder = "••••••••";
-                    document.getElementById('toggleIcon').style.display = 'none';
+                if (sectionId === "securitySection") {
+                    document.getElementById("passwordInput").placeholder = "••••••••";
+                    document.getElementById("toggleIcon").style.display = "none";
                 }
 
-                const inputs = section.querySelectorAll('input, textarea');
-                inputs.forEach(i => i.setAttribute('readonly', true));
+                const inputs = section.querySelectorAll("input, textarea");
+                inputs.forEach(i => i.setAttribute("readonly", true));
             }
         }
 
-        // File Previews
         function previewFile() {
-            const preview = document.getElementById('previewImg');
-            const file = document.getElementById('fileInput').files[0];
+            const preview = document.getElementById("previewImg");
+            const file = document.getElementById("fileInput").files[0];
             const reader = new FileReader();
             reader.addEventListener("load", function () { preview.src = reader.result; }, false);
             if (file) { reader.readAsDataURL(file); }
@@ -906,30 +625,19 @@ $badge = $statusBadgeMap[$driver['status'] ?? 'inactive'];
         }
 
         function togglePassword() {
-            const passwordInput = document.getElementById('passwordInput');
-            const toggleIcon = document.getElementById('toggleIcon');
+            const passwordInput = document.getElementById("passwordInput");
+            const toggleIcon = document.getElementById("toggleIcon");
 
-            if (passwordInput.type === 'password') {
-                passwordInput.type = 'text';
-                toggleIcon.classList.remove('fa-eye');
-                toggleIcon.classList.add('fa-eye-slash');
+            if (passwordInput.type === "password") {
+                passwordInput.type = "text";
+                toggleIcon.classList.remove("fa-eye");
+                toggleIcon.classList.add("fa-eye-slash");
             } else {
-                passwordInput.type = 'password';
-                toggleIcon.classList.remove('fa-eye-slash');
-                toggleIcon.classList.add('fa-eye');
+                passwordInput.type = "password";
+                toggleIcon.classList.remove("fa-eye-slash");
+                toggleIcon.classList.add("fa-eye");
             }
         }
-
-        // --- Logout Modal Functions ---
-        function showLogoutModal(e) {
-            if (e) e.preventDefault(); // Stop the page from jumping to top
-            document.getElementById('logoutModal').style.display = 'flex';
-        }
-
-        function closeLogoutModal() {
-            document.getElementById('logoutModal').style.display = 'none';
-        }
-    </script>
-</body>
-
-</html>
+    </script>';
+include '../layout/driver/footer.php';
+?>

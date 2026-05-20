@@ -2,8 +2,21 @@
 </div>
 </div>
 
-<script src="<?= $path ?>js/admin.js"></script>
+
 <script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const sidebar = document.getElementById('sidebar');
+        const content = document.getElementById('content');
+        const toggleBtn = document.getElementById('sidebarToggle');
+
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', function () {
+                sidebar.classList.toggle('active');
+                content.classList.toggle('active');
+            });
+        }
+    });
+
     // Global Loader JS logic
     function showGlobalLoader(customText = null) {
         if (customText) document.getElementById('loader-text').innerText = customText;

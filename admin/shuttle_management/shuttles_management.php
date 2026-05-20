@@ -27,7 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 'capacity' => $capacity,
                 'status' => 'active',
                 'is_online' => false,
-                'job_status' => 'Idle',
+                'job_status' => 'idle',
                 'created_at' => date('Y-m-d H:i:s'),
                 'updated_at' => date('Y-m-d H:i:s')
             ]);
@@ -53,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             // CASCADING SAFETY: If we edit the bus to be anything other than active, force it offline
             if ($status !== 'active') {
                 $updates[] = ['path' => 'is_online', 'value' => false];
-                $updates[] = ['path' => 'job_status', 'value' => 'Idle'];
+                $updates[] = ['path' => 'job_status', 'value' => 'idle'];
             }
 
             $firestore->database()->collection('Shuttles')->document($shuttleId)->update($updates);
@@ -109,7 +109,7 @@ $today = date('Y-m-d');
 
 $pageTitle = 'Shuttle Management - CampusPulse';
 $depth = '../../';
-include $depth . 'layout/admin_header.php';
+include $depth . 'layout/admin/header.php';
 ?>
 
 <style>
@@ -860,4 +860,4 @@ include $depth . 'layout/admin_header.php';
 <script async defer
     src="https://maps.googleapis.com/maps/api/js?key=<?= MAPS_API_KEY ?>&libraries=marker&callback=initMap&loading=async"></script>
 
-<?php include $depth . 'layout/admin_footer.php'; ?>
+<?php include $depth . 'layout/admin/footer.php'; ?>

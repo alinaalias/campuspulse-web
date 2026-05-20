@@ -93,7 +93,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $pageTitle = 'Profile Settings - CampusPulse';
-include '../layout/admin_header.php';
+$depth = '../';
+include $depth . 'layout/admin/header.php';
 ?>
 
 <div class="card" style="max-width: 850px; margin: 0 auto;">
@@ -223,4 +224,4 @@ include '../layout/admin_header.php';
     }
 </script>
 
-<?php include '../layout/admin_footer.php'; ?>
+<?php include $depth . 'layout/admin/footer.php'; ?>

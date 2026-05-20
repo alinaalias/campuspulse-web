@@ -8,7 +8,7 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'driver') {
 }
 $driverId = $_SESSION['user_id'];
 
-// 1. Fetch Ratings Data
+// Fetch Ratings Data
 $reviews = [];
 $totalScore = 0;
 $count = 0;
@@ -16,7 +16,7 @@ $starCounts = [5 => 0, 4 => 0, 3 => 0, 2 => 0, 1 => 0];
 
 $query = $firestore->database()->collection('Ratings')
     ->where('driver_id', '=', $driverId)
-    ->orderBy('timestamp', 'DESC') // Updated to match new schema
+    ->orderBy('timestamp', 'DESC')
     ->documents();
 
 foreach ($query as $doc) {
@@ -77,11 +77,10 @@ foreach ($query as $doc) {
     }
 }
 
-// 2. Calculate Final Average
+// Calculate Final Average
 $average = ($count > 0) ? round($totalScore / $count, 1) : 0.0;
 
-// 3. AUTO-UPDATE THE STAFFS COLLECTION
-// This ensures driver_profile.php and the Student App always have the latest average rating!
+
 if ($count > 0) {
     try {
         $firestore->database()->collection('Staffs')->document($driverId)->update([
@@ -91,182 +90,52 @@ if ($count > 0) {
     } catch (Exception $e) {
     }
 }
+$pageTitle = 'My Ratings';
+$extraHead = '
+<style>
+    .driver-header {
+        padding: 30px 20px 60px 20px;
+    }
+
+    .rating-container {
+        margin-top: -30px;
+        padding: 0 20px 100px 20px;
+        position: relative;
+        z-index: 10;
+    }
+
+    .summary-card {
+        background: white;
+        border-radius: 20px;
+        padding: 25px;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.05);
+        margin-bottom: 25px;
+    }
+
+    .score-hero { display: flex; align-items: center; justify-content: center; gap: 20px; margin-bottom: 25px; }
+    .big-score { font-size: 4rem; font-weight: 700; color: #2d3748; line-height: 1; }
+    .stars-hero i { color: #f39c12; font-size: 1.5rem; margin-right: 2px; }
+    .stars-hero i.empty { color: #e2e8f0; }
+
+    .breakdown-row { display: flex; align-items: center; margin-bottom: 8px; font-size: 0.85rem; color: #718096; font-weight: 600; }
+    .breakdown-bar-bg { flex: 1; height: 8px; background: #edf2f7; border-radius: 10px; margin: 0 15px; overflow: hidden; }
+    .breakdown-bar-fill { height: 100%; background: #f39c12; border-radius: 10px; }
+
+    .section-title { font-size: 1.1rem; font-weight: 700; color: #2d3748; margin-bottom: 15px; padding-left: 5px; }
+
+    .review-card { background: white; border-radius: 16px; padding: 20px; margin-bottom: 15px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03); border: 1px solid #f1f5f9; }
+    .review-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .reviewer-info { display: flex; align-items: center; gap: 10px; }
+    .reviewer-avatar { width: 35px; height: 35px; background: #edf2f7; color: #a0aec0; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1rem; }
+    .reviewer-name { font-weight: 600; color: #2d3748; font-size: 0.95rem; }
+    .review-date { font-size: 0.75rem; color: #a0aec0; font-weight: 500; }
+    .review-stars { color: #f39c12; font-size: 0.85rem; margin-bottom: 10px; }
+    .review-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    .tag-pill { background: #ebf5fb; color: #2980b9; font-size: 0.75rem; font-weight: 600; padding: 4px 10px; border-radius: 20px; }
+    .review-comment { font-size: 0.9rem; color: #4a5568; line-height: 1.5; font-style: italic; background: #f8fafc; padding: 12px; border-radius: 10px; border-left: 3px solid #cbd5e0; }
+</style>';
+include '../layout/driver/header.php';
 ?>
-
-<!DOCTYPE html>
-<html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <title>My Ratings</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap"
-        rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="../css/style.css">
-    <style>
-        .driver-header {
-            padding: 30px 20px 60px 20px;
-            background: linear-gradient(135deg, var(--primary-blue), #0d3c78);
-            color: white;
-            border-bottom-left-radius: 30px;
-            border-bottom-right-radius: 30px;
-        }
-
-        .rating-container {
-            margin-top: -30px;
-            padding: 0 20px 100px 20px;
-            position: relative;
-            z-index: 10;
-        }
-
-        .summary-card {
-            background: white;
-            border-radius: 20px;
-            padding: 25px;
-            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.05);
-            margin-bottom: 25px;
-        }
-
-        .score-hero {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 20px;
-            margin-bottom: 25px;
-        }
-
-        .big-score {
-            font-size: 4rem;
-            font-weight: 700;
-            color: #2d3748;
-            line-height: 1;
-        }
-
-        .stars-hero i {
-            color: #f39c12;
-            font-size: 1.5rem;
-            margin-right: 2px;
-        }
-
-        .stars-hero i.empty {
-            color: #e2e8f0;
-        }
-
-        .breakdown-row {
-            display: flex;
-            align-items: center;
-            margin-bottom: 8px;
-            font-size: 0.85rem;
-            color: #718096;
-            font-weight: 600;
-        }
-
-        .breakdown-bar-bg {
-            flex: 1;
-            height: 8px;
-            background: #edf2f7;
-            border-radius: 10px;
-            margin: 0 15px;
-            overflow: hidden;
-        }
-
-        .breakdown-bar-fill {
-            height: 100%;
-            background: #f39c12;
-            border-radius: 10px;
-        }
-
-        .section-title {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: #2d3748;
-            margin-bottom: 15px;
-            padding-left: 5px;
-        }
-
-        .review-card {
-            background: white;
-            border-radius: 16px;
-            padding: 20px;
-            margin-bottom: 15px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
-            border: 1px solid #f1f5f9;
-        }
-
-        .review-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-
-        .reviewer-info {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .reviewer-avatar {
-            width: 35px;
-            height: 35px;
-            background: #edf2f7;
-            color: #a0aec0;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1rem;
-        }
-
-        .reviewer-name {
-            font-weight: 600;
-            color: #2d3748;
-            font-size: 0.95rem;
-        }
-
-        .review-date {
-            font-size: 0.75rem;
-            color: #a0aec0;
-            font-weight: 500;
-        }
-
-        .review-stars {
-            color: #f39c12;
-            font-size: 0.85rem;
-            margin-bottom: 10px;
-        }
-
-        .review-tags {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-bottom: 10px;
-        }
-
-        .tag-pill {
-            background: #ebf5fb;
-            color: #2980b9;
-            font-size: 0.75rem;
-            font-weight: 600;
-            padding: 4px 10px;
-            border-radius: 20px;
-        }
-
-        .review-comment {
-            font-size: 0.9rem;
-            color: #4a5568;
-            line-height: 1.5;
-            font-style: italic;
-            background: #f8fafc;
-            padding: 12px;
-            border-radius: 10px;
-            border-left: 3px solid #cbd5e0;
-        }
-    </style>
-</head>
-
-<body class="driver-body">
 
     <div class="driver-header">
         <div style="display: flex; align-items: center; gap: 15px;">
@@ -365,8 +234,4 @@ if ($count > 0) {
 
     </div>
 
-    <?php include 'driver_navbar.php'; ?>
-
-</body>
-
-</html>
+<?php include '../layout/driver/footer.php'; ?>

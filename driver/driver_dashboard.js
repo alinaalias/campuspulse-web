@@ -14,49 +14,38 @@ function toggleStatus() {
     dot.style.background = isOnline ? '#bdc3c7' : '#2ecc71';
     dot.style.boxShadow = isOnline ? 'none' : '0 0 8px #2ecc71';
 
-    // Update parent pill style
     const pill = text.closest('.status-pill');
     if (pill) {
         pill.style.background = isOnline ? 'rgba(255,255,255,0.15)' : 'rgba(46, 204, 113, 0.15)';
         pill.style.border = isOnline ? '1px solid rgba(255,255,255,0.2)' : '1px solid rgba(46, 204, 113, 0.3)';
     }
 
-    // Toggle Phase 1 UI Cards
     const offlineCard = document.getElementById('offline-card');
     const scanningCard = document.getElementById('scanning-card');
     if (offlineCard && scanningCard) {
-        if (!isOnline) { // Switching to ONLINE
+        if (!isOnline) {
             offlineCard.style.display = 'none';
             scanningCard.style.display = 'block';
-        } else { // Switching to OFFLINE
+        } else {
             offlineCard.style.display = 'block';
             scanningCard.style.display = 'none';
-            // Also hide pinging card if suddenly offline
             const pingContainer = document.getElementById('pinging-card-container');
             if (pingContainer) pingContainer.innerHTML = '';
         }
     }
 
-    // Update Firestore is_online status immediately if assigned a shuttle
-    if (typeof driverAssignedShuttle !== 'undefined' && driverAssignedShuttle && typeof firebase !== 'undefined' && firebase.apps.length > 0) {
-        const db = firebase.firestore();
-        db.collection('Shuttles').doc(driverAssignedShuttle).set({
-            is_online: !isOnline,
-            last_updated: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true }).catch(err => console.error("Firestore sync error:", err));
-    }
-
+    // Ping the backend to sync Driver AND Shuttle simultaneously
     fetch('toggle_status.php', { method: 'POST' }).then(() => {
-        // UI is updated instantly, no hard reload required.
+        console.log("Duty Status Synced with Backend.");
     });
 }
-
 
 // ==========================================
 // 2. DYNAMIC GEOLOCATION & BOTTOM SHEET
 // ==========================================
 function toggleReportSheet(e) {
     if (typeof isDragging !== 'undefined' && isDragging) return;
+    if (e) e.preventDefault();
 
     const sheet = document.getElementById('reportSheet');
     const overlay = document.getElementById('reportOverlay');
@@ -69,98 +58,213 @@ function toggleReportSheet(e) {
         sheet.classList.add('active');
         overlay.classList.add('active');
 
-        // Update UI to Loading State
-        document.getElementById("locationIcon").innerHTML = '<i class="fas fa-circle-notch fa-spin" style="color: #3498db;"></i>';
-        document.getElementById("locationStatusText").innerText = 'Detecting precision location...';
-        getLocation();
-    }
-}
+        // Reset UI to step 1
+        document.getElementById('step1-grid').style.display = 'grid';
+        document.getElementById('step2-confirm').style.display = 'none';
+        document.getElementById('step3-success').style.display = 'none';
+        document.getElementById('alert_details').value = '';
 
-function getLocation() {
-    if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(showPosition, showError, { enableHighAccuracy: true, timeout: 15000 });
-    } else {
-        document.getElementById("locationStatusText").innerText = "Geolocation not supported.";
-    }
-}
-
-function showPosition(position) {
-    const lat = position.coords.latitude;
-    const lng = position.coords.longitude;
-
-    document.getElementById("driver_lat").value = lat;
-    document.getElementById("driver_lng").value = lng;
-    document.getElementById("locationStatusText").innerText = 'Finding street name...';
-
-    const apiUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
-
-    fetch(apiUrl, {
-        headers: {
-            'Accept-Language': 'en-US,en;q=0.9',
-            'User-Agent': 'CampusPulseApp/1.0'
+        const btn = document.getElementById('btnSubmitReport');
+        if (btn) {
+            btn.innerHTML = 'SEND ALERT <i class="fas fa-paper-plane"></i>';
+            btn.disabled = false;
         }
-    })
-        .then(response => response.json())
-        .then(data => {
-            const addr = data.address || {};
-            const precisePoint = addr.road || addr.pedestrian || addr.neighbourhood || addr.suburb || "Unknown Street";
-            const cityArea = addr.city || addr.town || addr.district || "";
-            const locationString = cityArea ? `${precisePoint}, ${cityArea}` : precisePoint;
 
-            document.getElementById("locationIcon").innerHTML = '<i class="fas fa-check-circle" style="color: #27ae60;"></i>';
-            document.getElementById("locationStatusText").innerText = locationString;
-            document.getElementById("detected_location").value = locationString;
-        })
-        .catch(error => {
-            document.getElementById("locationIcon").innerHTML = '<i class="fas fa-satellite" style="color: #f39c12;"></i>';
-            document.getElementById("locationStatusText").innerText = `GPS: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-            document.getElementById("detected_location").value = `GPS: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-        });
+        detectLocation();
+    }
 }
 
-function showError(error) {
-    document.getElementById("locationIcon").innerHTML = `<i class="fas fa-exclamation-triangle" style="color:#f39c12;"></i>`;
-    document.getElementById("locationStatusText").innerText = `Location access denied or timeout.`;
-}
+function detectLocation() {
+    const locStatus = document.getElementById('locationStatusText');
+    const locIcon = document.getElementById('locationIcon');
+    const latInput = document.getElementById('driver_lat');
+    const lngInput = document.getElementById('driver_lng');
+    const nameInput = document.getElementById('detected_location');
 
+    locStatus.innerHTML = 'Detecting coordinates... <i class="fas fa-circle-notch fa-spin"></i>';
+    locStatus.style.color = '#f39c12';
+    locIcon.innerHTML = '<i class="fas fa-circle-notch fa-spin" style="color: #3498db;"></i>';
 
-// ==========================================
-// 3. TWO-STEP REPORTING LOGIC
-// ==========================================
-function selectReportType(typeValue, title, iconClass, iconColor, bgColor) {
-    // 1. Set the hidden input for PHP
-    document.getElementById('final_alert_type').value = typeValue;
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(position => {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            latInput.value = lat;
+            lngInput.value = lng;
 
-    // 2. Update the Confirmation UI dynamically
-    document.getElementById('confirmTitle').innerText = title;
-    document.getElementById('confirmIcon').className = `fas ${iconClass}`;
-    document.getElementById('confirmIcon').style.color = iconColor;
-    document.getElementById('confirmIconBg').style.background = bgColor;
+            // Street Level Geocoding via OpenStreetMap
+            locStatus.innerHTML = 'Finding street name... <i class="fas fa-circle-notch fa-spin"></i>';
 
-    // If emergency, make the send button Red instead of Blue
-    const btnSubmit = document.getElementById('btnSubmitReport');
-    if (typeValue === 'breakdown' || typeValue === 'accident') {
-        btnSubmit.style.background = '#dc3545';
+            const apiUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
+            fetch(apiUrl, {
+                headers: {
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'User-Agent': 'CampusPulseApp/1.0'
+                }
+            })
+                .then(response => response.json())
+                .then(data => {
+                    const addr = data.address || {};
+                    const precisePoint = addr.road || addr.pedestrian || addr.neighbourhood || addr.suburb || "Unknown Street";
+                    const cityArea = addr.city || addr.town || addr.district || "";
+                    const locationString = cityArea ? `${precisePoint}, ${cityArea}` : precisePoint;
+
+                    locIcon.innerHTML = '<i class="fas fa-check-circle" style="color: #27ae60;"></i>';
+                    locStatus.innerText = locationString;
+                    locStatus.style.color = '#2d3748';
+                    nameInput.value = locationString;
+                })
+                .catch(error => {
+                    locIcon.innerHTML = '<i class="fas fa-check-circle" style="color: #27ae60;"></i>';
+                    locStatus.innerText = `GPS: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+                    locStatus.style.color = '#2d3748';
+                    nameInput.value = `GPS: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+                });
+
+        }, error => {
+            locStatus.innerHTML = 'Failed. Check GPS permissions.';
+            locStatus.style.color = '#e74c3c';
+            locIcon.innerHTML = '<i class="fas fa-exclamation-triangle" style="color: #e74c3c;"></i>';
+        }, { enableHighAccuracy: true, timeout: 15000 });
     } else {
-        btnSubmit.style.background = '#f39c12';
+        locStatus.innerHTML = 'GPS not supported.';
+        locStatus.style.color = '#e74c3c';
+    }
+}
+
+// ==========================================
+// 3. TWO-STEP REPORTING LOGIC & AJAX SUBMISSION
+// ==========================================
+let currentReportType = '';
+let currentReportTitle = '';
+
+const detailPlaceholders = {
+    'breakdown': "e.g., Engine died, waiting for tow...",
+    'accident': "e.g., Shuttle collided with car, need rescue...",
+    'traffic': "e.g., Roadblock / Accident ahead blocking lanes...",
+    'rain': "e.g., Flash flood near the library..."
+};
+
+function selectReportType(type, title, iconClass, color, bgColor) {
+    currentReportType = type;
+    currentReportTitle = title;
+
+    document.getElementById('final_alert_type').value = type;
+    document.getElementById('confirmTitle').innerText = title;
+
+    const confirmIconBg = document.getElementById('confirmIconBg');
+    const confirmIcon = document.getElementById('confirmIcon');
+
+    confirmIcon.className = 'fas ' + iconClass;
+    confirmIcon.style.color = color;
+    confirmIconBg.style.backgroundColor = bgColor;
+
+    document.getElementById('alert_details').placeholder = detailPlaceholders[type] || 'Provide additional details...';
+
+    // Dynamic Helper Text Based on Category
+    const helperText = document.getElementById('confirmHelperText');
+    if (type === 'breakdown' || type === 'accident') {
+        helperText.innerHTML = '<i class="fas fa-info-circle"></i> <b>WARNING:</b> This will flag your shuttle as disabled and automatically request an emergency replacement.';
+        helperText.style.color = '#c53030';
+        helperText.style.backgroundColor = '#fff5f5';
+        helperText.style.border = '1px solid #feb2b2';
+        helperText.style.display = 'block';
+    } else if (type === 'traffic') {
+        helperText.innerHTML = '<i class="fas fa-info-circle"></i> <b>Note:</b> Use this for traffic jams, roadblocks, or accidents ahead that DO NOT involve your shuttle.';
+        helperText.style.color = '#c05621';
+        helperText.style.backgroundColor = '#fffff0';
+        helperText.style.border = '1px solid #fbd38d';
+        helperText.style.display = 'block';
+    } else {
+        helperText.style.display = 'none';
     }
 
-    // 3. Swap the views
     document.getElementById('step1-grid').style.display = 'none';
     document.getElementById('step2-confirm').style.display = 'flex';
 }
 
 function cancelReport() {
-    // Swap back to the grid
     document.getElementById('step2-confirm').style.display = 'none';
     document.getElementById('step1-grid').style.display = 'grid';
     document.getElementById('final_alert_type').value = '';
-    document.getElementById('alert_details').value = ''; // clear text
+    document.getElementById('alert_details').value = '';
 }
 
-function showSendingFinal(btn) {
-    btn.style.opacity = '0.7';
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
+// Attach event listener safely after DOM loads
+document.addEventListener("DOMContentLoaded", function () {
+    const liveReportForm = document.getElementById('liveReportForm');
+    if (liveReportForm) {
+        liveReportForm.addEventListener('submit', function (e) {
+            e.preventDefault();
+
+            // Intercept with SweetAlert2 if it's an emergency
+            if (currentReportType === 'breakdown' || currentReportType === 'accident') {
+                Swal.fire({
+                    title: '🚨 Emergency Replacement 🚨',
+                    html: "This will instantly flag your shuttle as disabled and dispatch a replacement vehicle to your location.<br><br><b>If you are just stuck in traffic caused by someone else's accident, please click Cancel and use 'Heavy Traffic' instead.</b>",
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonColor: '#e74c3c',
+                    cancelButtonColor: '#4a5568',
+                    confirmButtonText: 'Yes, Request Replacement',
+                    cancelButtonText: 'Cancel',
+                    customClass: { popup: 'swal-mobile-custom' }
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        executeReportSubmission(this);
+                    }
+                });
+            } else {
+                executeReportSubmission(this);
+            }
+        });
+    }
+});
+
+function executeReportSubmission(formElement) {
+    const lat = document.getElementById('driver_lat').value;
+    if (!lat) {
+        Swal.fire('Location Missing', 'Please wait for your location to be detected before sending.', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('btnSubmitReport');
+    btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> SENDING...';
+    btn.disabled = true;
+
+    const formData = new FormData(formElement);
+
+    fetch(formElement.action, {
+        method: formElement.method,
+        body: formData
+    })
+        .then(response => {
+            if (response.ok) {
+                document.getElementById('step2-confirm').style.display = 'none';
+                document.getElementById('step3-success').style.display = 'flex';
+
+                setTimeout(() => {
+                    toggleReportSheet();
+
+                    setTimeout(() => {
+                        document.getElementById('step3-success').style.display = 'none';
+                        document.getElementById('step1-grid').style.display = 'grid';
+                        btn.innerHTML = 'SEND ALERT <i class="fas fa-paper-plane"></i>';
+                        btn.disabled = false;
+                        document.getElementById('alert_details').value = '';
+                    }, 400);
+
+                }, 2500);
+            } else {
+                throw new Error("Server error");
+            }
+        })
+        .catch(error => {
+            console.error("Error sending report: ", error);
+            Swal.fire('Error', 'Failed to send report. Please check your connection.', 'error');
+            btn.innerHTML = 'SEND ALERT <i class="fas fa-paper-plane"></i>';
+            btn.disabled = false;
+        });
 }
 
 
@@ -169,7 +273,7 @@ function showSendingFinal(btn) {
 // ==========================================
 const fab = document.getElementById('draggableFab');
 let isFabDragging = false;
-let fabStartY, fabStartTop; // Renamed to avoid clashing with preview_modal.php
+let fabStartY, fabStartTop;
 
 const dragStart = (e) => {
     if (!fab) return;
@@ -224,7 +328,6 @@ if (fab) {
 // ==========================================
 // 5. FIREBASE PUSH NOTIFICATIONS
 // ==========================================
-// Ensure these run only after Firebase is loaded
 document.addEventListener("DOMContentLoaded", function () {
     if (typeof firebase !== 'undefined' && firebase.apps.length > 0) {
         const messaging = firebase.messaging();
@@ -341,11 +444,8 @@ function startGpsBroadcast() {
     );
 }
 
-
-
 document.addEventListener("DOMContentLoaded", function () {
     if (typeof driverIsOnline !== 'undefined' && driverIsOnline && typeof driverAssignedShuttle !== 'undefined' && driverAssignedShuttle) {
         startGpsBroadcast();
     }
 });
-

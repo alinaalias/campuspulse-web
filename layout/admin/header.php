@@ -1,5 +1,5 @@
 <?php
-$path = isset($depth) ? $depth : '../';
+$path = isset($depth) ? $depth : '';
 $title = isset($pageTitle) ? $pageTitle : 'Admin Dashboard - CampusPulse';
 ?>
 
@@ -11,7 +11,7 @@ $title = isset($pageTitle) ? $pageTitle : 'Admin Dashboard - CampusPulse';
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= htmlspecialchars($title) ?></title>
 
-    <link rel="icon" type="image/x-icon" href="<?= $path ?>img/favicon.ico">
+    <link rel="icon" type="image/x-icon" href="<?= $path ?>img/campulse_favicon.png">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap"
         rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
@@ -54,7 +54,7 @@ $title = isset($pageTitle) ? $pageTitle : 'Admin Dashboard - CampusPulse';
     </div>
 
     <div class="wrapper">
-        <?php include $path . 'layout/admin_sidebar.php'; ?>
+        <?php include $path . 'layout/admin/sidebar.php'; ?>
 
         <div id="content">
 

@@ -1,27 +1,23 @@
 <?php
 session_start();
-// FIX: Force the server to use Malaysian time for all date() calculations
 date_default_timezone_set('Asia/Kuala_Lumpur');
 require_once '../config.php';
 
-// 1. Security
+
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'driver') {
     header('Location: ../login.php');
     exit();
 }
 $driverId = $_SESSION['user_id'];
 
-// 2. Handle Date Filter
+
 $filterDate = $_GET['filter_date'] ?? '';
 
-// ===================================================================================
-// DATA FETCHING & MERGING (Firebase Index Bypass & Catch-All Logic)
-// ===================================================================================
 $historyLog = [];
 $now = time();
-$bufferSeconds = 900; // 15 MINUTES BUFFER TIME
+$bufferSeconds = 900; // 15-minute buffer
 
-// A. FETCH SCHEDULES (Query by driver_id ONLY to bypass index requirements)
+
 $schedQuery = $firestore->database()->collection('Schedules')
     ->where('driver_id', '=', $driverId)
     ->documents();
@@ -83,7 +79,7 @@ foreach ($schedQuery as $doc) {
     }
 }
 
-// B. FETCH ON-DEMAND REQUESTS (Query by driver_id ONLY to bypass index requirements)
+
 $odQuery = $firestore->database()->collection('Bookings')
     ->where('driver_id', '=', $driverId)
     ->documents();
@@ -130,121 +126,28 @@ foreach ($odQuery as $doc) {
     }
 }
 
-// C. SORT BY NEWEST FIRST
+
 usort($historyLog, function ($a, $b) {
     return $b['timestamp'] - $a['timestamp'];
 });
 
+$pageTitle = 'Trip History';
+$extraHead = '
+<style>
+    .filter-form { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-bottom: 25px; align-items: center; }
+    @media (max-width: 480px) { .filter-form { grid-template-columns: 1fr; } .btn-clear { justify-content: center; } }
+    .filter-input { width: 100%; padding: 14px 15px 14px 45px; border: none; border-radius: 14px; font-family: inherit; font-size: 0.95rem; color: #555; background: white; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04); outline: none; transition: box-shadow 0.2s; box-sizing: border-box; display: block; }
+    .filter-input:focus { box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08); }
+    .btn-clear { background: #ffebee; color: #e74c3c; text-decoration: none; padding: 14px 18px; border-radius: 14px; font-weight: 600; font-size: 0.9rem; box-shadow: 0 4px 15px rgba(231, 76, 60, 0.1); display: flex; align-items: center; gap: 6px; transition: transform 0.2s; white-space: nowrap; flex-shrink: 0; }
+    .btn-clear:active { transform: scale(0.95); }
+    .history-card-link { display: block; text-decoration: none; color: inherit; transition: transform 0.2s, box-shadow 0.2s; }
+    .history-card-link:hover .history-card { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06); border-color: var(--primary-blue); }
+    .status-completed { color: #2ecc71; background: #eafaf1; padding: 4px 8px; border-radius: 6px; }
+    .status-cancelled { color: #e74c3c; background: #fdedec; padding: 4px 8px; border-radius: 6px; }
+    .status-missed { color: #f39c12; background: #fef5e7; padding: 4px 8px; border-radius: 6px; }
+</style>';
+include '../layout/driver/header.php';
 ?>
-
-<!DOCTYPE html>
-<html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <title>Trip History</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="../css/style.css">
-
-    <style>
-        .filter-form {
-            display: grid;
-            grid-template-columns: 1fr auto;
-            gap: 10px;
-            margin-bottom: 25px;
-            align-items: center;
-        }
-
-        @media (max-width: 480px) {
-            .filter-form {
-                grid-template-columns: 1fr;
-            }
-
-            .btn-clear {
-                justify-content: center;
-            }
-        }
-
-        .filter-input {
-            width: 100%;
-            padding: 14px 15px 14px 45px;
-            border: none;
-            border-radius: 14px;
-            font-family: inherit;
-            font-size: 0.95rem;
-            color: #555;
-            background: white;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
-            outline: none;
-            transition: box-shadow 0.2s;
-            box-sizing: border-box;
-            display: block;
-        }
-
-        .filter-input:focus {
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-        }
-
-        .btn-clear {
-            background: #ffebee;
-            color: #e74c3c;
-            text-decoration: none;
-            padding: 14px 18px;
-            border-radius: 14px;
-            font-weight: 600;
-            font-size: 0.9rem;
-            box-shadow: 0 4px 15px rgba(231, 76, 60, 0.1);
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            transition: transform 0.2s;
-            white-space: nowrap;
-            flex-shrink: 0;
-        }
-
-        .btn-clear:active {
-            transform: scale(0.95);
-        }
-
-        .history-card-link {
-            display: block;
-            text-decoration: none;
-            color: inherit;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-
-        .history-card-link:hover .history-card {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06);
-            border-color: var(--primary-blue);
-        }
-
-        .status-completed {
-            color: #2ecc71;
-            background: #eafaf1;
-            padding: 4px 8px;
-            border-radius: 6px;
-        }
-
-        .status-cancelled {
-            color: #e74c3c;
-            background: #fdedec;
-            padding: 4px 8px;
-            border-radius: 6px;
-        }
-
-        .status-missed {
-            color: #f39c12;
-            background: #fef5e7;
-            padding: 4px 8px;
-            border-radius: 6px;
-        }
-    </style>
-</head>
-
-<body class="driver-body">
 
     <div class="driver-header">
         <div style="width: 100%; display: flex; align-items: center; gap: 15px;">
@@ -340,8 +243,4 @@ usort($historyLog, function ($a, $b) {
 
     </div>
 
-    <?php include 'driver_navbar.php'; ?>
-
-</body>
-
-</html>
+<?php include '../layout/driver/footer.php'; ?>

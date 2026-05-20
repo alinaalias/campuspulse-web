@@ -13,25 +13,43 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
 $todayStr = date('Y-m-d');
 $now = time();
 
-// === LAZY EXECUTION: AUTO-ARCHIVE 15-MIN OVERDUE SCHEDULES ===
+$batch = $firestore->database()->batch();
+$updatesCount = 0;
+
+// === LAZY EXECUTION 1: AUTO-ARCHIVE 15-MIN OVERDUE SCHEDULES ===
 $activeTodaySchedules = $firestore->database()->collection('Schedules')
     ->where('date', '=', $todayStr)
     ->where('status', 'in', ['published', 'active'])
     ->documents();
 
-$batch = $firestore->database()->batch();
-$updatesCount = 0;
 foreach ($activeTodaySchedules as $doc) {
     if (!$doc->exists())
         continue;
     $d = $doc->data();
     $schedTime = strtotime($d['date'] . ' ' . $d['departure_time']);
-    // If schedule time is valid and 15 mins (900 seconds) have passed
     if ($schedTime > 0 && ($now - $schedTime) > 900) {
         $batch->update($doc->reference(), [['path' => 'status', 'value' => 'missed']]);
         $updatesCount++;
     }
 }
+
+// === LAZY EXECUTION 2: ESCALATE OVERDUE ON-DEMAND TO ADMIN_REVIEW ===
+$pendingBookings = $firestore->database()->collection('Bookings')
+    ->where('type', '=', 'ondemand')
+    ->where('status', 'in', ['pending', 'searching'])
+    ->documents();
+
+foreach ($pendingBookings as $doc) {
+    if (!$doc->exists()) continue;
+    $d = $doc->data();
+    $reqTime = strtotime($d['request_time'] ?? 'now');
+    // If pending for more than 2.5 minutes (150 seconds), escalate to admin_review
+    if (($now - $reqTime) > 150) {
+        $batch->update($doc->reference(), [['path' => 'status', 'value' => 'admin_review']]);
+        $updatesCount++;
+    }
+}
+
 if ($updatesCount > 0) {
     $batch->commit();
 }
@@ -48,7 +66,7 @@ $studentsDocs = $firestore->database()->collection('Students')->documents();
 foreach ($studentsDocs as $doc) {
     if ($doc->exists()) {
         $studentsMap[$doc->id()] = $doc->data()['full_name'] ?? 'Unknown Student';
-        $studentsIdMap[$doc->id()] = $doc->id();
+        $studentsIdMap[$doc->id()] = $doc->data()['student_id'] ?? $doc->id();
     }
 }
 
@@ -91,81 +109,56 @@ foreach ($activeOndemandBookings as $doc) {
     $data['dropoff_name'] = $data['dropoff_stop_name'] ?? $stops[$data['dropoff_stop_id'] ?? ''] ?? ($data['dropoff_stop_id'] ?? 'Dest');
 
     $status = $data['status'] ?? 'pending';
-    if (in_array($status, ['pending', 'searching', 'confirmed', 'arriving', 'onboard'])) {
+    // THE FIX: Include admin_review in the live radar tracking
+    if (in_array($status, ['pending', 'admin_review', 'searching', 'confirmed', 'arriving', 'onboard'])) {
         $data['is_overdue'] = false;
-        if ($status === 'pending') {
+        
+       if ($status === 'pending' || $status === 'searching') {
             $reqTime = strtotime($data['request_time'] ?? 'now');
-            if (($now - $reqTime) > 300) {
+            if (($now - $reqTime) > 150) {
                 $data['is_overdue'] = true;
             }
+        } elseif ($status === 'admin_review') {
+            $data['is_overdue'] = true; // Always highlight admin reviews
         }
+        
         $liveRadar[] = $data;
     }
 }
 
 usort($liveRadar, function ($a, $b) {
-    $statA = ($a['status'] === 'pending') ? 0 : 1;
-    $statB = ($b['status'] === 'pending') ? 0 : 1;
+    $statA = in_array($a['status'], ['pending','searching', 'admin_review']) ? 0 : 1;
+    $statB = in_array($b['status'], ['pending','searching', 'admin_review']) ? 0 : 1;
     if ($statA !== $statB)
         return $statA - $statB;
     return strtotime($a['request_time'] ?? '0') - strtotime($b['request_time'] ?? '0');
 });
 
-// Horizon 2 Data ($futureManifest)
-$schedulesDocs = $firestore->database()->collection('Schedules')
-    ->where('date', '>=', $todayStr)
-    ->documents();
-
-foreach ($schedulesDocs as $doc) {
-    if (!$doc->exists())
-        continue;
-    $schedule = $doc->data();
-    $schedule['id'] = $doc->id();
-
-    $status = $schedule['status'] ?? '';
-    if (in_array($status, ['published', 'active'])) {
-        $scheduleId = $schedule['schedule_id'] ?? $schedule['id'];
-
-        $manifestList = [];
-        $fallbackZoneName = null;
-
-        $schBookings = $firestore->database()->collection('Bookings')
-            ->where('schedule_id', '=', $scheduleId)
-            ->documents();
-
-        foreach ($schBookings as $bDoc) {
-            if (!$bDoc->exists())
-                continue;
-            $bData = $bDoc->data();
-            $bStatus = $bData['status'] ?? '';
-
-            if (!$fallbackZoneName && !empty($bData['zone_name'])) {
-                $fallbackZoneName = $bData['zone_name'];
-            }
-
-            if (in_array($bStatus, ['completed', 'onboard', 'confirmed'])) {
-                $uid = $bData['user_id'] ?? '';
-                $manifestList[] = [
-                    'student_name' => $studentsMap[$uid] ?? 'Unknown',
-                    'student_id' => $uid,
-                    'pickup_stop_name' => $bData['pickup_stop_name'] ?? $stops[$bData['pickup_stop_id'] ?? ''] ?? 'Unknown'
-                ];
-            }
-        }
-
-        $schedule['manifest_list'] = $manifestList;
-        $schedule['zone_name'] = $zonesMap[$schedule['zone_id'] ?? ''] ?? ($schedule['zone_id'] ?? $fallbackZoneName ?? 'N/A');
-        $futureManifest[] = $schedule;
-    }
+// Horizon 2 & 3 Data
+$bookingDocs = $firestore->database()->collection('Bookings')->documents();
+foreach ($bookingDocs as $doc) {
+    if (!$doc->exists()) continue;
+    $data = $doc->data();
+    $status = strtolower($data['status'] ?? '');
+    $type = strtolower($data['type'] ?? '');
+    if ($type !== 'scheduled') continue;
+    if (!in_array($status, ['completed', 'cancelled', 'missed', 'archived'])) continue;
+    $data['source'] = 'booking';
+    $data['id'] = $doc->id();
+    $historyData[] = $data;
 }
 
-usort($futureManifest, function ($a, $b) {
-    $timeA = strtotime(($a['date'] ?? '') . ' ' . ($a['departure_time'] ?? ''));
-    $timeB = strtotime(($b['date'] ?? '') . ' ' . ($b['departure_time'] ?? ''));
-    return $timeA - $timeB;
-});
+$scheduleDocs = $firestore->database()->collection('Schedules')->documents();
+foreach ($scheduleDocs as $doc) {
+    if (!$doc->exists()) continue;
+    $data = $doc->data();
+    $status = strtolower($data['status'] ?? '');
+    if (!in_array($status, ['completed', 'cancelled', 'missed', 'archived'])) continue;
+    $data['source'] = 'schedule';
+    $data['id'] = $doc->id();
+    $historyData[] = $data;
+}
 
-// ── Horizon 3 Data ($historyData) ──
 $ratingsMap = [];
 $ratingsDocs = $firestore->database()->collection('Ratings')->documents();
 foreach ($ratingsDocs as $rDoc) {
@@ -178,40 +171,54 @@ foreach ($ratingsDocs as $rDoc) {
     }
 }
 
-// Query 1: Scheduled History
-$scheduledHistoryDocs = $firestore->database()->collection('Schedules')
-    ->limit(60)
-    ->documents();
-
-foreach ($scheduledHistoryDocs as $doc) {
-    if (!$doc->exists())
-        continue;
+$scheduledBookingHistoryDocs = $firestore->database()->collection('Bookings')->documents();
+foreach ($scheduledBookingHistoryDocs as $doc) {
+    if (!$doc->exists()) continue;
     $data = $doc->data();
     $status = $data['status'] ?? '';
-    if (!in_array($status, ['completed', 'cancelled', 'missed', 'archived']))
-        continue;
+    if (strtolower($data['type'] ?? '') !== 'scheduled') continue;
+    if (!in_array($status, ['cancelled', 'missed', 'archived'])) continue;
+    $scheduleId = $data['schedule_id'] ?? $doc->id();
+    $data['id'] = $doc->id();
+    $data['display_type'] = 'Scheduled (Booking)';
+    $data['driver_name_resolved'] = $driversMap[$data['driver_id'] ?? ''] ?? '-';
+    $data['pickup_name'] = $data['pickup_stop_name'] ?? $stops[$data['pickup_stop_id'] ?? ''] ?? 'Unknown';
+    $data['dropoff_name'] = $data['dropoff_stop_name'] ?? $stops[$data['dropoff_stop_id'] ?? ''] ?? 'Unknown';
+    $data['total_fare'] = floatval($data['fare'] ?? 0);
+    $data['rating'] = $ratingsMap[$scheduleId] ?? null;
+    $data['_sort_ts'] = strtotime($data['booking_time'] ?? $data['request_time'] ?? 'now');
+    $data['manifest_list'] = [[
+        'student_name' => $studentsMap[$data['user_id'] ?? ''] ?? 'Unknown',
+        'user_id' => $studentsIdMap[$data['user_id'] ?? ''] ?? $data['user_id'],
+        'pickup_stop_name' => $data['pickup_name'],
+        'dropoff_stop_name' => $data['dropoff_name'],
+        'status' => $status
+    ]];
+    $historyData[] = $data;
+}
 
+$scheduledHistoryDocs = $firestore->database()->collection('Schedules')->documents();
+foreach ($scheduledHistoryDocs as $doc) {
+    if (!$doc->exists()) continue;
+    $data = $doc->data();
+    $status = $data['status'] ?? '';
+    if ($status !== 'completed') continue;
     $data['id'] = $doc->id();
     $data['display_type'] = 'Scheduled';
     $data['driver_name_resolved'] = $driversMap[$data['driver_id'] ?? ''] ?? '-';
-    $data['_sort_ts'] = strtotime(($data['date'] ?? '') . ' ' . ($data['departure_time'] ?? '00:00'));
-
-    $scheduleId = $data['schedule_id'] ?? $data['id'];
+    $scheduleId = $data['schedule_id'] ?? $doc->id();
     $totalFare = 0;
     $manifestList = [];
-
     $schFareDocs = $firestore->database()->collection('Bookings')
         ->where('schedule_id', '=', $scheduleId)
         ->documents();
-
     foreach ($schFareDocs as $fd) {
-        if (!$fd->exists())
-            continue;
+        if (!$fd->exists()) continue;
         $fData = $fd->data();
         $totalFare += floatval($fData['fare'] ?? 0);
         $manifestList[] = [
             'student_name' => $studentsMap[$fData['user_id'] ?? ''] ?? 'Unknown',
-            'user_id' => $fData['user_id'] ?? '-',
+            'user_id' => $studentsIdMap[$fData['user_id'] ?? ''] ?? ($fData['user_id'] ?? '-'),
             'pickup_stop_name' => $fData['pickup_stop_name'] ?? $stops[$fData['pickup_stop_id'] ?? ''] ?? 'Unknown',
             'dropoff_stop_name' => $fData['dropoff_stop_name'] ?? $stops[$fData['dropoff_stop_id'] ?? ''] ?? 'Unknown',
             'status' => $fData['status'] ?? 'unknown'
@@ -223,74 +230,88 @@ foreach ($scheduledHistoryDocs as $doc) {
     $historyData[] = $data;
 }
 
-// Query 2: On-Demand History
 $ondemandHistoryDocs = $firestore->database()->collection('Bookings')
     ->where('type', '=', 'ondemand')
     ->limit(60)
     ->documents();
-
 foreach ($ondemandHistoryDocs as $doc) {
-    if (!$doc->exists())
-        continue;
+    if (!$doc->exists()) continue;
     $data = $doc->data();
     $status = $data['status'] ?? '';
-    if (!in_array($status, ['completed', 'cancelled', 'missed']))
-        continue;
-
+    if (!in_array($status, ['completed', 'cancelled', 'missed'])) continue;
     $data['id'] = $doc->id();
     $data['display_type'] = 'On-Demand';
-
     $uid = $data['user_id'] ?? '';
     $data['student_name_resolved'] = $studentsMap[$uid] ?? 'Unknown';
-    $data['student_id_resolved'] = $uid;
+    $data['student_id_resolved'] = $studentsIdMap[$uid] ?? $uid; 
     $data['driver_name_resolved'] = $driversMap[$data['driver_id'] ?? ''] ?? '-';
-
     if (empty($data['shuttle_id']) && !empty($data['driver_id'])) {
         $data['shuttle_id'] = $driversShuttleMap[$data['driver_id']] ?? 'Unknown';
     }
-
     $data['pickup_name'] = $data['pickup_stop_name'] ?? $stops[$data['pickup_stop_id'] ?? ''] ?? 'Current Loc';
     $data['dropoff_name'] = $data['dropoff_stop_name'] ?? $stops[$data['dropoff_stop_id'] ?? ''] ?? 'Dest';
     $data['rating'] = $ratingsMap[$data['id']] ?? null;
-
     $rawTs = $data['booking_time'] ?? $data['request_time'] ?? null;
     $data['_sort_ts'] = $rawTs ? strtotime($rawTs) : 0;
-
-    $data['manifest_list'] = [
-        [
-            'student_name' => $data['student_name_resolved'],
-            'user_id' => $data['student_id_resolved'],
-            'pickup_stop_name' => $data['pickup_name'],
-            'dropoff_stop_name' => $data['dropoff_name'],
-            'status' => $data['status']
-        ]
-    ];
-
+    $data['manifest_list'] = [[
+        'student_name' => $data['student_name_resolved'],
+        'user_id' => $data['student_id_resolved'],
+        'pickup_stop_name' => $data['pickup_name'],
+        'dropoff_stop_name' => $data['dropoff_name'],
+        'status' => $data['status']
+    ]];
     $historyData[] = $data;
 }
 
-// Sort merged array: newest first
-usort($historyData, fn($a, $b) => $b['_sort_ts'] - $a['_sort_ts']);
+usort($historyData, function ($a, $b) {
+    return ($b['_sort_ts'] ?? 0) <=> ($a['_sort_ts'] ?? 0);
+});
+
+// =======================================================
+// CLASH PREVENTION: Fetch Busy Drivers to Filter from List
+// =======================================================
+$busyDrivers = [];
+
+// Drivers currently doing On-Demand
+$activeJobs = $firestore->database()->collection('Bookings')
+    ->where('status', 'in', ['confirmed', 'arriving', 'arrived', 'onboard'])
+    ->documents();
+foreach ($activeJobs as $job) {
+    if (!empty($job->data()['driver_id'])) {
+        $busyDrivers[] = $job->data()['driver_id'];
+    }
+}
+
+// Drivers currently doing Scheduled Routes
+$activeScheds = $firestore->database()->collection('Schedules')
+    ->where('status', '=', 'active')
+    ->documents();
+foreach ($activeScheds as $sched) {
+    if (!empty($sched->data()['driver_id'])) {
+        $busyDrivers[] = $sched->data()['driver_id'];
+    }
+}
 
 $availableDrivers = [];
 foreach ($driversMap as $did => $dName) {
-    $availableDrivers[] = ['id' => $did, 'name' => $dName];
+    // ONLY append if driver is NOT actively executing a trip
+    if (!in_array($did, $busyDrivers)) {
+        $vehicle = $driversShuttleMap[$did] ?? 'No Vehicle';
+        $availableDrivers[] = ['id' => $did, 'name' => $dName . ' (' . $vehicle . ')'];
+    }
 }
 
-$pageTitle = "Booking Hub";
+$pageTitle = "Booking Hub - CampusPulse";
 $depth = '../../';
-include $depth . 'layout/admin_header.php';
+include $depth . 'layout/admin/header.php';
 ?>
 
 <style>
-    /* Global & Layout overrides */
     body {
         background: #f8fafc;
         font-family: 'Poppins', sans-serif;
         color: #334155;
     }
-
-    /* ── Horizon Tab Navigation ── */
     .tab-nav {
         display: flex;
         gap: 8px;
@@ -298,7 +319,6 @@ include $depth . 'layout/admin_header.php';
         margin-bottom: 24px;
         padding: 0 4px;
     }
-
     .tab-btn {
         background: none;
         border: none;
@@ -311,49 +331,33 @@ include $depth . 'layout/admin_header.php';
         margin-bottom: -2px;
         transition: 0.2s;
     }
-
     .tab-btn i {
         margin-right: 8px;
         font-size: 1.1rem;
     }
-
     .tab-btn:hover {
         color: #0f172a;
     }
-
     .tab-btn.active {
         color: var(--primary-blue);
         border-bottom-color: var(--primary-blue);
     }
-
     .tab-pane {
         display: none;
     }
-
     .tab-pane.active {
         display: block;
         animation: fadeIn 0.2s ease-in-out;
     }
-
     @keyframes fadeIn {
-        from {
-            opacity: 0;
-            transform: translateY(5px);
-        }
-
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
+        from { opacity: 0; transform: translateY(5px); }
+        to { opacity: 1; transform: translateY(0); }
     }
-
-    /* ── Horizon 1: Action Cards CSS Grid ── */
     .dispatch-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
         gap: 20px;
     }
-
     .card-empty {
         grid-column: 1 / -1;
         background: #fff;
@@ -364,7 +368,6 @@ include $depth . 'layout/admin_header.php';
         font-size: 1.05rem;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
     }
-
     .dispatch-card {
         background: #fff;
         border-radius: 12px;
@@ -375,12 +378,10 @@ include $depth . 'layout/admin_header.php';
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
         transition: transform 0.2s, box-shadow 0.2s;
     }
-
     .dispatch-card:hover {
         transform: translateY(-3px);
         box-shadow: 0 8px 25px rgba(0, 0, 0, 0.06);
     }
-
     .dc-header {
         padding: 16px 20px;
         display: flex;
@@ -389,24 +390,20 @@ include $depth . 'layout/admin_header.php';
         border-bottom: 1px solid #f1f5f9;
         background: #f8fafc;
     }
-
     .dc-student {
         font-weight: 700;
         color: #0f172a;
         font-size: 1.05rem;
     }
-
     .dc-time-wrap {
         text-align: right;
     }
-
     .dc-time {
         font-size: 0.8rem;
         color: #64748b;
         font-weight: 600;
         display: block;
     }
-
     .sla-warning {
         display: inline-flex;
         align-items: center;
@@ -419,7 +416,6 @@ include $depth . 'layout/admin_header.php';
         border-radius: 6px;
         margin-top: 6px;
     }
-
     .sla-warning .dot {
         width: 8px;
         height: 8px;
@@ -428,54 +424,38 @@ include $depth . 'layout/admin_header.php';
         display: inline-block;
         animation: pulse 1s infinite alternate;
     }
-
     @keyframes pulse {
-        from {
-            opacity: 1;
-            transform: scale(1);
-        }
-
-        to {
-            opacity: 0.5;
-            transform: scale(1.3);
-        }
+        from { opacity: 1; transform: scale(1); }
+        to { opacity: 0.5; transform: scale(1.3); }
     }
-
     .dc-body {
         padding: 20px;
         flex: 1;
     }
-
     .dc-route {
         margin-bottom: 16px;
         font-size: 0.9rem;
         line-height: 1.6;
     }
-
     .dc-route .loc {
         display: flex;
         align-items: center;
         gap: 10px;
     }
-
     .dc-route .loc i {
         font-size: 0.8rem;
         width: 14px;
         text-align: center;
     }
-
     .dc-route .loc-from i {
         color: #10b981;
     }
-
     .dc-route .loc-to i {
         color: #ef4444;
     }
-
     .dc-route strong {
         color: #1e293b;
     }
-
     .dc-fare {
         font-size: 1.25rem;
         font-weight: 700;
@@ -485,25 +465,21 @@ include $depth . 'layout/admin_header.php';
         margin-top: 14px;
         text-align: right;
     }
-
     .dc-footer {
         padding: 16px 20px;
         border-top: 1px solid #f1f5f9;
         background: #fff;
     }
-
     .dc-footer-top {
         display: flex;
         justify-content: space-between;
         align-items: center;
     }
-
     .form-force-assign {
         display: flex;
         gap: 8px;
         margin-top: 12px;
     }
-
     .form-force-assign select {
         flex: 1;
         padding: 8px 12px;
@@ -513,7 +489,6 @@ include $depth . 'layout/admin_header.php';
         font-size: 0.85rem;
         background: #f8fafc;
     }
-
     .btn-assign {
         background: #f59e0b;
         color: #fff;
@@ -526,12 +501,9 @@ include $depth . 'layout/admin_header.php';
         display: inline-flex;
         align-items: center;
     }
-
     .btn-assign:hover {
         background: #d97706;
     }
-
-    /* ── Horizon 2 & 3: High Density Tables ── */
     .table-card {
         background: #fff;
         border-radius: 12px;
@@ -539,13 +511,11 @@ include $depth . 'layout/admin_header.php';
         border: 1px solid #e2e8f0;
         overflow: hidden;
     }
-
     .styled-table {
         width: 100%;
         border-collapse: collapse;
         font-size: 0.85rem;
     }
-
     .styled-table th {
         background: #f8fafc;
         text-transform: uppercase;
@@ -557,22 +527,18 @@ include $depth . 'layout/admin_header.php';
         text-align: left;
         border-bottom: 2px solid #e2e8f0;
     }
-
     .styled-table td {
         padding: 14px 20px;
         color: #334155;
         border-bottom: 1px solid #f1f5f9;
         vertical-align: middle;
     }
-
     .styled-table tbody tr:nth-child(even) td {
         background: #fafbfc;
     }
-
     .styled-table tbody tr:hover td {
         background: #f0f7ff;
     }
-
     .badge {
         padding: 4px 10px;
         border-radius: 6px;
@@ -581,47 +547,42 @@ include $depth . 'layout/admin_header.php';
         text-transform: uppercase;
         display: inline-block;
     }
-
     .badge-pending {
         background: #fff7ed;
         color: #ea580c;
         border: 1px solid #ffedd5;
     }
-
+    .badge-admin_review {
+        background: #fef2f2;
+        color: #ef4444;
+        border: 1px solid #fca5a5;
+    }
     .badge-completed {
         background: #ecfdf5;
         color: #10b981;
         border: 1px solid #d1fae5;
     }
-
     .badge-cancelled,
     .badge-missed {
         background: #fef2f2;
         color: #ef4444;
         border: 1px solid #fee2e2;
     }
-
     .badge-default {
         background: #f1f5f9;
         color: #64748b;
         border: 1px solid #e2e8f0;
     }
-
-    /* ── Modals ── */
     .modal-overlay {
         display: none;
         position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
+        top: 0; left: 0; right: 0; bottom: 0;
         background: rgba(15, 23, 42, 0.6);
         z-index: 1000;
         align-items: center;
         justify-content: center;
         backdrop-filter: blur(2px);
     }
-
     .modal-content {
         background: #fff;
         width: 90%;
@@ -633,7 +594,6 @@ include $depth . 'layout/admin_header.php';
         display: flex;
         flex-direction: column;
     }
-
     .modal-header {
         padding: 18px 24px;
         background: #f8fafc;
@@ -642,13 +602,11 @@ include $depth . 'layout/admin_header.php';
         justify-content: space-between;
         align-items: center;
     }
-
     .modal-header h3 {
         margin: 0;
         font-size: 1.1rem;
         color: #0f172a;
     }
-
     .modal-close {
         background: none;
         border: none;
@@ -657,23 +615,19 @@ include $depth . 'layout/admin_header.php';
         cursor: pointer;
         transition: 0.2s;
     }
-
     .modal-close:hover {
         color: #ef4444;
     }
-
     .modal-body {
         padding: 0;
         overflow-y: auto;
         flex: 1;
     }
-
     .manifest-table {
         width: 100%;
         border-collapse: collapse;
         font-size: 0.85rem;
     }
-
     .manifest-table th {
         background: #fff;
         position: sticky;
@@ -684,14 +638,11 @@ include $depth . 'layout/admin_header.php';
         color: #64748b;
         border-bottom: 1px solid #e2e8f0;
     }
-
     .manifest-table td {
         padding: 12px 24px;
         border-bottom: 1px solid #f1f5f9;
         color: #1e293b;
     }
-
-    /* ── Pagination ── */
     .pagination-bar {
         padding: 12px 20px;
         background: #f8fafc;
@@ -702,7 +653,6 @@ include $depth . 'layout/admin_header.php';
         font-size: 0.85rem;
         color: #64748b;
     }
-
     .page-btn {
         padding: 6px 12px;
         background: #fff;
@@ -711,137 +661,24 @@ include $depth . 'layout/admin_header.php';
         cursor: pointer;
         font-family: 'Poppins';
     }
-
-    .page-btn:hover {
-        background: #f1f5f9;
-    }
-
-    .page-btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-
-    #pageIndicator {
-        font-weight: 600;
-        color: #0f172a;
-        padding: 0 10px;
-    }
-
-    /* ── Global Search Bar & Multi Filter ── */
-    .search-bar-wrap {
-        margin-bottom: 20px;
-        display: flex;
-        gap: 12px;
-        flex-wrap: wrap;
-        align-items: center;
-    }
-
-    .search-input-box {
-        position: relative;
-        flex: 1;
-        min-width: 250px;
-    }
-
-    .search-input-box i {
-        position: absolute;
-        left: 14px;
-        top: 50%;
-        transform: translateY(-50%);
-        color: #94a3b8;
-        font-size: 0.95rem;
-    }
-
-    .form-input {
-        height: 42px;
-        padding: 0 16px;
-        border: 1.5px solid #e2e8f0;
-        border-radius: 10px;
-        font-family: 'Poppins', sans-serif;
-        font-size: 0.9rem;
-        color: #334155;
-        background: #fff;
-        box-sizing: border-box;
-        transition: border-color 0.2s;
-        outline: none;
-    }
-
-    .form-input:focus {
-        border-color: var(--primary-blue);
-    }
-
-    #globalSearch {
-        padding-left: 40px;
-        width: 100%;
-    }
-
-    /* ── Trip Logs Modal Timeline ── */
-    .vertical-timeline {
-        padding: 20px 24px;
-    }
-
-    .tl-item {
-        position: relative;
-        padding-left: 28px;
-        padding-bottom: 20px;
-        border-left: 2px solid #e2e8f0;
-    }
-
-    .tl-item:last-child {
-        border-left: 2px solid transparent;
-        padding-bottom: 0;
-    }
-
-    .tl-dot {
-        position: absolute;
-        left: -7px;
-        top: 2px;
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        background: var(--primary-blue);
-        border: 2px solid #fff;
-        box-shadow: 0 0 0 2px var(--primary-blue);
-    }
-
-    .tl-time {
-        font-size: 0.75rem;
-        color: #94a3b8;
-        font-weight: 600;
-        margin-bottom: 4px;
-    }
-
-    .tl-event {
-        font-size: 0.88rem;
-        color: #1e293b;
-        font-weight: 600;
-    }
-
-    .tl-detail {
-        font-size: 0.75rem;
-        color: #64748b;
-        margin-top: 2px;
-        font-weight: 600;
-        text-transform: uppercase;
-    }
-
-    .btn-logs {
-        background: #f8fafc;
-        color: #475569;
-        border: 1px solid #e2e8f0;
-        padding: 6px 12px;
-        border-radius: 6px;
-        font-size: 0.78rem;
-        font-weight: 600;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-        transition: 0.2s;
-    }
-
-    .btn-logs:hover {
-        background: #e2e8f0;
-    }
+    .page-btn:hover { background: #f1f5f9; }
+    .page-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #pageIndicator { font-weight: 600; color: #0f172a; padding: 0 10px; }
+    .search-bar-wrap { margin-bottom: 20px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    .search-input-box { position: relative; flex: 1; min-width: 250px; }
+    .search-input-box i { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #94a3b8; font-size: 0.95rem; }
+    .form-input { height: 42px; padding: 0 16px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-family: 'Poppins', sans-serif; font-size: 0.9rem; color: #334155; background: #fff; box-sizing: border-box; transition: border-color 0.2s; outline: none; }
+    .form-input:focus { border-color: var(--primary-blue); }
+    #globalSearch { padding-left: 40px; width: 100%; }
+    .vertical-timeline { padding: 20px 24px; }
+    .tl-item { position: relative; padding-left: 28px; padding-bottom: 20px; border-left: 2px solid #e2e8f0; }
+    .tl-item:last-child { border-left: 2px solid transparent; padding-bottom: 0; }
+    .tl-dot { position: absolute; left: -7px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--primary-blue); border: 2px solid #fff; box-shadow: 0 0 0 2px var(--primary-blue); }
+    .tl-time { font-size: 0.75rem; color: #94a3b8; font-weight: 600; margin-bottom: 4px; }
+    .tl-event { font-size: 0.88rem; color: #1e293b; font-weight: 600; }
+    .tl-detail { font-size: 0.75rem; color: #64748b; margin-top: 2px; font-weight: 600; text-transform: uppercase; }
+    .btn-logs { background: #f8fafc; color: #475569; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 0.78rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; transition: 0.2s; }
+    .btn-logs:hover { background: #e2e8f0; }
 </style>
 
 <h2 class="page-title">
@@ -850,13 +687,11 @@ include $depth . 'layout/admin_header.php';
 </h2>
 
 <?php if (isset($_GET['msg'])): ?>
-    <div
-        style="background:#ecfdf5; color:#10b981; padding:14px 20px; border-radius:10px; margin-bottom:24px; border:1px solid #d1fae5; font-weight:500;">
+    <div style="background:#ecfdf5; color:#10b981; padding:14px 20px; border-radius:10px; margin-bottom:24px; border:1px solid #d1fae5; font-weight:500;">
         <i class="fas fa-check-circle" style="margin-right:8px;"></i> <?= htmlspecialchars($_GET['msg']) ?>
     </div>
 <?php elseif (isset($_GET['err'])): ?>
-    <div
-        style="background:#fef2f2; color:#ef4444; padding:14px 20px; border-radius:10px; margin-bottom:24px; border:1px solid #fee2e2; font-weight:500;">
+    <div style="background:#fef2f2; color:#ef4444; padding:14px 20px; border-radius:10px; margin-bottom:24px; border:1px solid #fee2e2; font-weight:500;">
         <i class="fas fa-exclamation-circle" style="margin-right:8px;"></i>
         <?= htmlspecialchars($_GET['err']) ?>
     </div>
@@ -891,8 +726,7 @@ include $depth . 'layout/admin_header.php';
     <button class="tab-btn active interaction-target" onclick="switchHorizon('horizon1')">
         <i class="fas fa-bolt"></i> Live Radar
         <?php if (count($liveRadar) > 0): ?>
-            <span
-                style="background:#ef4444; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.75rem; margin-left:6px;"><?= count($liveRadar) ?></span>
+            <span style="background:#ef4444; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.75rem; margin-left:6px;"><?= count($liveRadar) ?></span>
         <?php endif; ?>
     </button>
     <button class="tab-btn interaction-target" onclick="switchHorizon('horizon2')">
@@ -912,9 +746,9 @@ include $depth . 'layout/admin_header.php';
     <?php else: ?>
         <div class="dispatch-grid">
             <?php foreach ($liveRadar as $req):
-                $isPending = ($req['status'] ?? 'pending') === 'pending';
+                $isPending = in_array($req['status'] ?? 'pending', ['pending', 'admin_review']);
                 $badgeClass = 'badge-' . strtolower($req['status']);
-                if (!in_array($badgeClass, ['badge-pending', 'badge-completed', 'badge-cancelled', 'badge-missed'])) {
+                if (!in_array($badgeClass, ['badge-pending', 'badge-admin_review', 'badge-completed', 'badge-cancelled', 'badge-missed'])) {
                     $badgeClass = 'badge-default';
                 }
                 ?>
@@ -924,14 +758,13 @@ include $depth . 'layout/admin_header.php';
                         <div class="dc-student">
                             <?= htmlspecialchars($studentsMap[$req['user_id'] ?? ''] ?? 'Unknown Student') ?>
                             <div style="font-size:0.72rem; color:#94a3b8; font-weight:500; margin-top:2px;">
-                                ID: <?= htmlspecialchars(substr($req['user_id'] ?? 'N/A', 0, 8)) ?>…
+                                ID: <?= htmlspecialchars($studentsIdMap[$req['user_id'] ?? ''] ?? ($req['user_id'] ?? 'N/A')) ?>
                             </div>
                         </div>
                         <div class="dc-time-wrap">
                             <span class="dc-time"><?= date('h:i A', strtotime($req['request_time'] ?? 'now')) ?></span>
                             <?php if (!empty($req['is_overdue'])): ?>
-                                <div class="sla-warning interaction-target"><span class="dot"></span> SLA Warning
-                                </div>
+                                <div class="sla-warning interaction-target"><span class="dot"></span> SLA Warning</div>
                             <?php endif; ?>
                         </div>
                     </div>
@@ -940,8 +773,7 @@ include $depth . 'layout/admin_header.php';
                             <div class="loc loc-from"><i class="fas fa-circle"></i>
                                 <strong><?= htmlspecialchars($req['pickup_name'] ?? 'N/A') ?></strong>
                             </div>
-                            <div style="border-left: 2px dashed #cbd5e1; height: 12px; margin-left: 6px; margin-block: 2px;">
-                            </div>
+                            <div style="border-left: 2px dashed #cbd5e1; height: 12px; margin-left: 6px; margin-block: 2px;"></div>
                             <div class="loc loc-to"><i class="fas fa-map-marker-alt"></i>
                                 <strong><?= htmlspecialchars($req['dropoff_name'] ?? 'N/A') ?></strong>
                             </div>
@@ -950,7 +782,12 @@ include $depth . 'layout/admin_header.php';
                     </div>
                     <div class="dc-footer">
                         <div class="dc-footer-top">
-                            <span class="badge <?= $badgeClass ?>"><?= ucfirst($req['status'] ?? 'Pending') ?></span>
+                            <?php if (($req['status'] ?? '') === 'admin_review'): ?>
+                                <span class="badge badge-admin_review">Needs Review</span>
+                            <?php else: ?>
+                                <span class="badge <?= $badgeClass ?>"><?= ucfirst($req['status'] ?? 'Pending') ?></span>
+                            <?php endif; ?>
+                            
                             <?php if (!$isPending && !empty($req['driver_id'])): ?>
                                 <span style="font-size:0.8rem; color:#64748b; font-weight:600;"><i class="fas fa-id-card"></i>
                                     <?= htmlspecialchars($driversMap[$req['driver_id']] ?? 'Driver') ?></span>
@@ -961,10 +798,14 @@ include $depth . 'layout/admin_header.php';
                             <form action="assign_driver.php" method="POST" class="form-force-assign interaction-target">
                                 <input type="hidden" name="booking_id" value="<?= $req['id'] ?>">
                                 <select name="driver_id" required class="interaction-target">
-                                    <option value="">Force Assign to...</option>
-                                    <?php foreach ($availableDrivers as $d): ?>
-                                        <option value="<?= $d['id'] ?>"><?= htmlspecialchars($d['name']) ?></option>
-                                    <?php endforeach; ?>
+                                    <option value="" disabled selected>Force Assign to...</option>
+                                    <?php if(empty($availableDrivers)): ?>
+                                        <option value="" disabled>No idle drivers available</option>
+                                    <?php else: ?>
+                                        <?php foreach ($availableDrivers as $d): ?>
+                                            <option value="<?= $d['id'] ?>"><?= htmlspecialchars($d['name']) ?></option>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
                                 </select>
                                 <button type="submit" class="btn-assign interaction-target"><i class="fas fa-bolt"></i></button>
                             </form>
@@ -1007,8 +848,7 @@ include $depth . 'layout/admin_header.php';
                                 </div>
                             </td>
                             <td>
-                                <strong
-                                    style="color:var(--primary-blue);"><?= htmlspecialchars($sch['route_id'] ?? 'Unknown') ?></strong>
+                                <strong style="color:var(--primary-blue);"><?= htmlspecialchars($sch['route_id'] ?? 'Unknown') ?></strong>
                                 <div style="font-size:0.77rem; color:#64748b; margin-top:3px;">
                                     <i class="fas fa-map-pin"
                                         style="margin-right:3px;"></i><?= htmlspecialchars($sch['zone_name'] ?? 'N/A') ?>
@@ -1020,8 +860,7 @@ include $depth . 'layout/admin_header.php';
                             <?php
                             $booked = intval($sch['actual_booked_count'] ?? count($sch['manifest_list'] ?? []));
                             $cap = intval($sch['capacity'] ?? 1);
-                            if ($cap < 1)
-                                $cap = 1;
+                            if ($cap < 1) $cap = 1;
                             $percent = min(100, ($booked / $cap) * 100);
                             $barColor = $percent >= 100 ? '#ef4444' : ($percent >= 80 ? '#f59e0b' : '#10b981');
                             $isFull = ($percent >= 100);
@@ -1033,10 +872,8 @@ include $depth . 'layout/admin_header.php';
                                         <?php if ($isFull): ?><i class="fas fa-lock"
                                                 style="color:#ef4444; margin-left:4px; font-size:0.75rem;"></i><?php endif; ?>
                                     </div>
-                                    <div
-                                        style="width:100%; height:7px; background:#e2e8f0; border-radius:4px; overflow:hidden;">
-                                        <div
-                                            style="height:100%; width:<?= $percent ?>%; background:<?= $barColor ?>; border-radius:4px; transition:width 0.3s;">
+                                    <div style="width:100%; height:7px; background:#e2e8f0; border-radius:4px; overflow:hidden;">
+                                        <div style="height:100%; width:<?= $percent ?>%; background:<?= $barColor ?>; border-radius:4px; transition:width 0.3s;">
                                         </div>
                                     </div>
                                 </div>
@@ -1054,7 +891,6 @@ include $depth . 'layout/admin_header.php';
                                 <button class="btn-logs interaction-target" onclick="openModal('mod_<?= $sch['id'] ?>')">
                                     <i class="fas fa-users"></i> View Manifest
                                 </button>
-
                                 <div class="modal-overlay interaction-target" id="mod_<?= $sch['id'] ?>">
                                     <div class="modal-content">
                                         <div class="modal-header">
@@ -1074,8 +910,7 @@ include $depth . 'layout/admin_header.php';
                                                 <tbody>
                                                     <?php if (empty($sch['manifest_list'])): ?>
                                                         <tr>
-                                                            <td colspan="2" style="text-align:center; padding:30px;">No
-                                                                passengers boarded yet.</td>
+                                                            <td colspan="2" style="text-align:center; padding:30px;">No passengers boarded yet.</td>
                                                         </tr>
                                                     <?php else: ?>
                                                         <?php foreach ($sch['manifest_list'] as $stu): ?>
@@ -1083,12 +918,10 @@ include $depth . 'layout/admin_header.php';
                                                                 <td style="font-weight:600;">
                                                                     <?= htmlspecialchars($stu['student_name']) ?>
                                                                     <div style="font-size:0.72rem; color:#94a3b8; margin-top:2px;">
-                                                                        ID:
-                                                                        <?= htmlspecialchars(substr($stu['student_id'] ?? 'N/A', 0, 8)) ?>…
+                                                                        ID: <?= htmlspecialchars($stu['student_id'] ?? 'N/A') ?>
                                                                     </div>
                                                                 </td>
-                                                                <td><?= htmlspecialchars($stu['pickup_stop_name']) ?>
-                                                                </td>
+                                                                <td><?= htmlspecialchars($stu['pickup_stop_name']) ?></td>
                                                             </tr>
                                                         <?php endforeach; ?>
                                                     <?php endif; ?>
@@ -1133,7 +966,7 @@ include $depth . 'layout/admin_header.php';
                         if (!in_array($badgeClass, ['badge-completed', 'badge-cancelled', 'badge-missed', 'badge-archived']))
                             $badgeClass = 'badge-default';
 
-                        $isOD = ($row['display_type'] === 'On-Demand');
+                        $isOD = (($row['display_type'] ?? '') === 'On-Demand');
 
                         if ($isOD) {
                             $dispTime = isset($row['booking_time'])
@@ -1141,8 +974,8 @@ include $depth . 'layout/admin_header.php';
                                 : (isset($row['request_time']) ? date('M d, Y h:i A', strtotime($row['request_time'])) : 'N/A');
 
                             $studentLabel = htmlspecialchars($row['student_name_resolved'] ?? '-');
-                            $studentIdShort = htmlspecialchars(substr($row['student_id_resolved'] ?? '', 0, 8));
-                            $details = $studentLabel . '<div style="font-size:0.72rem; color:#94a3b8;">ID: ' . $studentIdShort . '…</div>';
+                            $studentIdFull = htmlspecialchars($row['student_id_resolved'] ?? '');
+                            $details = $studentLabel . '<div style="font-size:0.72rem; color:#94a3b8;">ID: ' . $studentIdFull . '</div>';
                             $detailsSub = 'OD: ' . htmlspecialchars(($row['pickup_name'] ?? '') . ' → ' . ($row['dropoff_name'] ?? ''));
 
                             $fareDisplay = 'RM ' . number_format(floatval($row['fare'] ?? 0), 2);
@@ -1150,7 +983,6 @@ include $depth . 'layout/admin_header.php';
                             $dispTime = ($row['date'] ?? 'N/A') . ' ' . ($row['departure_time'] ?? '');
                             $details = htmlspecialchars($row['route_id'] ?? 'Unknown Route');
 
-                            // Correctly calculate Booked vs Actual Boarded
                             $bookedCount = intval($row['booked_count'] ?? 0);
                             $boardedCount = 0;
                             if (!empty($row['manifest_list'])) {
@@ -1161,7 +993,6 @@ include $depth . 'layout/admin_header.php';
                                 }
                             }
                             $detailsSub = $bookedCount . ' Booked, ' . $boardedCount . ' Boarded';
-
                             $fareDisplay = 'RM ' . number_format(floatval($row['total_fare'] ?? 0), 2) . ' <span style="font-size:0.72rem; color:#94a3b8;">(total)</span>';
                         }
 
@@ -1171,30 +1002,21 @@ include $depth . 'layout/admin_header.php';
                         } else {
                             $ratingHtml = '<span style="color:#cbd5e1;">Unrated</span>';
                         }
-
                         $tripDataJson = htmlspecialchars(json_encode($row), ENT_QUOTES, 'UTF-8');
                         ?>
                         <tr class="history-row searchable-row" data-type="<?= $isOD ? 'ondemand' : 'scheduled' ?>"
                             data-status="<?= strtolower($status) ?>">
-                            <td style="color:#64748b; font-size:0.82rem; white-space:nowrap;"><?= $dispTime ?>
-                            </td>
+                            <td style="color:#64748b; font-size:0.82rem; white-space:nowrap;"><?= $dispTime ?></td>
                             <td>
                                 <?php if ($isOD): ?>
-                                    <span
-                                        style="color:#ea580c; font-weight:600; background:#fff7ed; padding:4px 8px; border-radius:6px; font-size:0.8rem;"><i
-                                            class="fas fa-bolt"></i> On-Demand</span>
+                                    <span style="color:#ea580c; font-weight:600; background:#fff7ed; padding:4px 8px; border-radius:6px; font-size:0.8rem;"><i class="fas fa-bolt"></i> On-Demand</span>
                                 <?php else: ?>
-                                    <span
-                                        style="color:#2563eb; font-weight:600; background:#eff6ff; padding:4px 8px; border-radius:6px; font-size:0.8rem;"><i
-                                            class="far fa-calendar"></i> Scheduled</span>
+                                    <span style="color:#2563eb; font-weight:600; background:#eff6ff; padding:4px 8px; border-radius:6px; font-size:0.8rem;"><i class="far fa-calendar"></i> Scheduled</span>
                                 <?php endif; ?>
                             </td>
                             <td>
                                 <div style="font-weight:600; color:#0f172a;"><?= $details ?></div>
-                                <div style="font-size:0.77rem; color:#94a3b8; margin-top:2px;">
-                                    <?= $detailsSub ?>
-                                </div>
-
+                                <div style="font-size:0.77rem; color:#94a3b8; margin-top:2px;"><?= $detailsSub ?></div>
                                 <span style="display:none;" class="hidden-search-data">
                                     <?php
                                     if (!$isOD && !empty($row['manifest_list'])) {
@@ -1206,18 +1028,14 @@ include $depth . 'layout/admin_header.php';
                                 </span>
                             </td>
                             <td style="color:#475569;">
-                                <div style="font-weight:600; color:#1e293b;"><i class="fas fa-id-card"
-                                        style="color:#cbd5e1; margin-right:4px;"></i>
+                                <div style="font-weight:600; color:#1e293b;"><i class="fas fa-id-card" style="color:#cbd5e1; margin-right:4px;"></i>
                                     <?= htmlspecialchars($row['driver_name_resolved'] ?? '-') ?></div>
-                                <div style="font-size:0.77rem; color:#94a3b8; margin-top:2px;"><i class="fas fa-bus"
-                                        style="margin-right:4px;"></i>
+                                <div style="font-size:0.77rem; color:#94a3b8; margin-top:2px;"><i class="fas fa-bus" style="margin-right:4px;"></i>
                                     <?= htmlspecialchars($row['shuttle_id'] ?? 'N/A') ?></div>
                             </td>
                             <td><span class="badge <?= $badgeClass ?>"><?= ucfirst($status) ?></span></td>
                             <td style="white-space:nowrap;">
-                                <div style="font-weight:700; color:#0f172a; font-size:0.9rem;">
-                                    <?= $fareDisplay ?>
-                                </div>
+                                <div style="font-weight:700; color:#0f172a; font-size:0.9rem;"><?= $fareDisplay ?></div>
                                 <div style="font-size:0.8rem; margin-top:4px;"><?= $ratingHtml ?></div>
                             </td>
                             <td>
@@ -1266,8 +1084,6 @@ include $depth . 'layout/admin_header.php';
     </div>
 </div>
 
-
-
 <script>
     // ── Globals & Tab Logic ──
     function switchHorizon(tabId) {
@@ -1308,7 +1124,7 @@ include $depth . 'layout/admin_header.php';
                 let timeStr = 'N/A';
                 if (rawTs) {
                     try {
-                        const d = new Date(rawTs);
+                        const d = new Date(rawTs.replace(' ', 'T'));
                         timeStr = d.toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kuala_Lumpur' })
                             + ', ' + d.toLocaleDateString('en-MY', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kuala_Lumpur' });
                     } catch (e) { timeStr = rawTs; }
@@ -1328,7 +1144,6 @@ include $depth . 'layout/admin_header.php';
                 timeline.appendChild(item);
             });
         }
-
         document.getElementById('logsModal').style.display = 'flex';
     }
 
@@ -1367,7 +1182,7 @@ include $depth . 'layout/admin_header.php';
                 let timeStr = rawTs;
                 if (rawTs) {
                     try {
-                        const d = new Date(rawTs);
+                        const d = new Date(rawTs.replace(' ', 'T'));
                         timeStr = d.toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' });
                     } catch (e) { }
                 }
@@ -1435,7 +1250,7 @@ include $depth . 'layout/admin_header.php';
         const typeFilter = document.getElementById('filterType').value.toLowerCase();
         const statusFilter = document.getElementById('filterStatus').value.toLowerCase();
 
-        // Filter Horizon 1 (Live Radar)
+        // Filter Horizon 1
         document.querySelectorAll('.dispatch-card').forEach(card => {
             const cardType = card.getAttribute('data-type') || '';
             const cardStatus = card.getAttribute('data-status') || '';
@@ -1447,7 +1262,7 @@ include $depth . 'layout/admin_header.php';
             card.style.display = (matchTerm && matchType && matchStatus) ? 'flex' : 'none';
         });
 
-        // Filter Horizon 2 (Upcoming Trips)
+        // Filter Horizon 2
         document.querySelectorAll('#horizon2 .searchable-row').forEach(row => {
             const rowType = row.getAttribute('data-type') || '';
             const rowStatus = row.getAttribute('data-status') || '';
@@ -1459,7 +1274,7 @@ include $depth . 'layout/admin_header.php';
             row.style.display = (matchTerm && matchType && matchStatus) ? 'table-row' : 'none';
         });
 
-        // Filter Horizon 3 (History)
+        // Filter Horizon 3
         visibleRows = historyRows.filter(row => {
             const rowType = row.getAttribute('data-type') || '';
             const rowStatus = row.getAttribute('data-status') || '';
@@ -1481,7 +1296,6 @@ include $depth . 'layout/admin_header.php';
         applyFilters();
     }
 
-    // Listeners for all filters
     document.getElementById('globalSearch').addEventListener('keyup', applyFilters);
     document.getElementById('filterType').addEventListener('change', applyFilters);
     document.getElementById('filterStatus').addEventListener('change', applyFilters);
@@ -1513,4 +1327,4 @@ include $depth . 'layout/admin_header.php';
     });
 </script>
 
-<?php include $depth . 'layout/admin_footer.php'; ?>
+<?php include $depth . 'layout/admin/footer.php'; ?>

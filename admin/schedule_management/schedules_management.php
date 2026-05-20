@@ -132,7 +132,7 @@ sort($uniqueShuttles);
 
 $pageTitle = 'Schedule Management - CampusPulse';
 $depth = '../../';
-include $depth . 'layout/admin_header.php';
+include $depth . 'layout/admin/header.php';
 ?>
 
     <style>
@@ -1231,5 +1231,5 @@ include $depth . 'layout/admin_header.php';
         }
     </script>
 
-<?php include $depth . 'layout/admin_footer.php'; ?>
+<?php include $depth . 'layout/admin/footer.php'; ?>
 

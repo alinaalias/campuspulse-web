@@ -41,7 +41,7 @@ try {
     $driverId = null;
     foreach ($driversSnap as $d) {
         $driverId = $d->id();
-        break; 
+        break;
     }
     if (!$driverId) {
         echo json_encode(['success' => false, 'message' => 'No active driver assigned to this shuttle.']);
@@ -91,9 +91,17 @@ try {
 
     foreach ($driverSchedules as $sched) {
         $sData = $sched->data();
+
+        // FIX: The Status Bypass
+        // If the schedule is already done or cancelled, do not calculate a clash for it!
+        $currentStatus = $sData['status'] ?? '';
+        if ($currentStatus === 'completed' || $currentStatus === 'cancelled' || $currentStatus === 'missed') {
+            continue;
+        }
+
         $sDep = strtotime($date . ' ' . $sData['departure_time']);
 
-        $sDurationMins = $lastOffset * 2; 
+        $sDurationMins = $lastOffset * 2;
         if (!empty($sData['etas']) && is_array($sData['etas'])) {
             $etasVals = array_values($sData['etas']);
             $sEndTimeStr = end($etasVals);
@@ -118,8 +126,10 @@ try {
     // 4. Determine Peak
     $hour = intval(date('H', $baseTime));
     $peak = 'none';
-    if ($hour >= 7 && $hour <= 10) $peak = 'morning';
-    else if ($hour >= 16 && $hour <= 20) $peak = 'evening';
+    if ($hour >= 7 && $hour <= 10)
+        $peak = 'morning';
+    else if ($hour >= 16 && $hour <= 20)
+        $peak = 'evening';
 
     // 5. Generate and Insert
     $scheduleId = generateCustomId('schedules', 'SCHED', $firestore);

@@ -50,9 +50,31 @@ function formatDate($timestamp)
     return date('d M Y, h:i A', strtotime($timestamp));
 }
 
+// REVERTED: Firebase strictly rejects extra query params, so we load the raw URL.
+$photoUrl = $student['photo_url'] ?? '';
+$displayImg = !empty($photoUrl) ? $photoUrl : 'https://cdn-icons-png.flaticon.com/512/149/149071.png';
+
+// 2. DYNAMIC PROFILE COMPLETION VERIFICATION
+$dbCompleted = $student['has_completed_profile'] ?? false;
+$hasName = !empty($student['full_name']);
+$hasPhone = !empty($student['phone_number']);
+$hasId = !empty($student['student_id']);
+$hasPhoto = !empty($student['photo_url']);
+
+$hasClasses = false;
+if (!empty($student['timetable']) && is_array($student['timetable'])) {
+    foreach ($student['timetable'] as $day => $classes) {
+        if (!empty($classes)) {
+            $hasClasses = true;
+            break;
+        }
+    }
+}
+$isProfileComplete = $dbCompleted || ($hasName && $hasPhone && $hasId && $hasPhoto && $hasClasses);
+
 $pageTitle = 'View Student - CampusPulse';
 $depth = '../../';
-include $depth . 'layout/admin_header.php';
+include $depth . 'layout/admin/header.php';
 ?>
 <style>
     .profile-header {
@@ -143,7 +165,6 @@ include $depth . 'layout/admin_header.php';
     }
 </style>
 
-
 <div style="margin-bottom: 20px;">
     <a href="students_management.php" class="btn" style="background:transparent; color:#666; padding-left:0;">
         <i class="fas fa-arrow-left"></i> Back to Students List
@@ -159,7 +180,7 @@ include $depth . 'layout/admin_header.php';
 <div class="card">
 
     <div class="profile-header">
-        <img src="<?= htmlspecialchars($student['photo_url'] ?? '../../assets/default-user.png') ?>" class="profile-img"
+        <img src="<?= htmlspecialchars($displayImg) ?>" class="profile-img"
             onerror="this.src='https://cdn-icons-png.flaticon.com/512/149/149071.png'">
 
         <div style="flex: 1;">
@@ -205,10 +226,11 @@ include $depth . 'layout/admin_header.php';
         <div class="info-group">
             <label>Profile Completion</label>
             <p>
-                <?php if (!empty($student['has_completed_profile'])): ?>
-                    <span style="color:var(--success);"><i class="fas fa-check-circle"></i> Complete</span>
+                <?php if ($isProfileComplete): ?>
+                    <span style="color:var(--success); font-weight:600;"><i class="fas fa-check-circle"></i> Complete</span>
                 <?php else: ?>
-                    <span style="color:#f39c12;"><i class="fas fa-exclamation-circle"></i> Incomplete</span>
+                    <span style="color:#f39c12; font-weight:600;"><i class="fas fa-exclamation-circle"></i>
+                        Incomplete</span>
                 <?php endif; ?>
             </p>
         </div>
@@ -287,8 +309,5 @@ include $depth . 'layout/admin_header.php';
     </div>
 
 </div>
-</div>
-</div>
-</div>
 
-<?php include $depth . 'layout/admin_footer.php'; ?>
+<?php include $depth . 'layout/admin/footer.php'; ?>

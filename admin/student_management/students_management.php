@@ -8,164 +8,27 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
     exit();
 }
 
-$search = trim($_GET['search'] ?? '');
-
-// Pagination
-$limit = 10;
-$page = max(1, intval($_GET['page'] ?? 1));
-$startIndex = ($page - 1) * $limit;
-
-// Fetch students
+// Fetch all students (Removed PHP search and pagination to allow instant JS filtering)
 $studentsSnapshot = $firestore->database()->collection('Students')->documents();
-$allStudents = [];
+$students = [];
 
 foreach ($studentsSnapshot as $student) {
     $data = $student->data();
     $data['id'] = $student->id();
-
-    if ($search) {
-        $q = strtolower($search);
-        if (
-            str_contains(strtolower($data['full_name'] ?? ''), $q) ||
-            str_contains(strtolower($data['student_email'] ?? ''), $q) ||
-            str_contains(strtolower($data['student_id'] ?? ''), $q)
-        ) {
-            $allStudents[] = $data;
-        }
-    } else {
-        $allStudents[] = $data;
-    }
+    $students[] = $data;
 }
-
-$totalStudents = count($allStudents);
-$totalPages = ceil($totalStudents / $limit);
-$students = array_slice($allStudents, $startIndex, $limit);
 
 $pageTitle = 'Students Management - CampusPulse';
 $depth = '../../';
-include $depth . 'layout/admin_header.php';
+include $depth . 'layout/admin/header.php';
 ?>
 
-
-
-<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-    <h2 class="page-title">Students Management</h2>
-</div>
-
-<div class="card" style="padding: 20px;">
-    <form method="GET" style="display:flex; gap:10px;">
-        <input type="text" name="search" class="form-control" placeholder="Search by name, email, or ID..."
-            value="<?= htmlspecialchars($search) ?>" style="margin:0; flex:1;">
-
-        <button type="submit" class="btn btn-primary">
-            <i class="fas fa-search"></i> Search
-        </button>
-
-        <button type="button" class="btn" style="background:#ccc; color:#333;"
-            onclick="window.location.href='students_management.php'">
-            Reset
-        </button>
-    </form>
-</div>
-
-<div class="card">
-    <table class="styled-table">
-        <thead>
-            <tr>
-                <th>Photo</th>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Phone</th>
-                <th>Student ID</th>
-                <th>Status</th>
-                <th>Profile</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php if (empty($students)): ?>
-                <tr>
-                    <td colspan="8" style="text-align:center; padding: 20px; color:#888;">
-                        No students found.
-                    </td>
-                </tr>
-            <?php endif; ?>
-
-            <?php foreach ($students as $student):
-                $photoUrl = $student['photo_url'] ?? '';
-                $fallback = "https://cdn-icons-png.flaticon.com/512/149/149071.png";
-                $displayImg = !empty($photoUrl) ? $photoUrl : $fallback;
-                ?>
-                <tr>
-                    <td>
-                        <img src="<?= htmlspecialchars($displayImg) ?>" alt="Photo"
-                            style="width:40px; height:40px; border-radius:50%; object-fit:cover; border:1px solid #ddd;"
-                            onerror="this.src='<?= $fallback ?>';">
-                    </td>
-                    <td style="font-weight:600;"><?= htmlspecialchars($student['full_name'] ?? '-') ?></td>
-                    <td><?= htmlspecialchars($student['student_email'] ?? '-') ?></td>
-                    <td><?= htmlspecialchars($student['phone_number'] ?? '-') ?></td>
-                    <td><span class="badge"
-                            style="background:#eee; padding:2px 6px; border-radius:4px; font-size:0.85em;"><?= htmlspecialchars($student['student_id'] ?? '-') ?></span>
-                    </td>
-
-                    <td>
-                        <label class="switch">
-                            <input type="checkbox" <?= ($student['status'] ?? '') === 'active' ? 'checked' : '' ?>
-                                onchange="toggleStudentStatus(this, '<?= $student['id'] ?>')">
-                            <span class="slider"></span>
-                        </label>
-                    </td>
-
-                    <td>
-                        <?php if (!empty($student['has_completed_profile'])): ?>
-                            <span style="color:var(--success); font-weight:bold;"><i class="fas fa-check-circle"></i> Yes</span>
-                        <?php else: ?>
-                            <span style="color:#999;">No</span>
-                        <?php endif; ?>
-                    </td>
-
-                    <td>
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <a href="view_student.php?id=<?= $student['id'] ?>" class="btn" title="View Details"
-                                style="padding:6px 10px; font-size:0.9rem; background: var(--primary-blue); color: white; border-radius: 4px;">
-                                <i class="fas fa-eye"></i>
-                            </a>
-
-                            <?php if (($student['status'] ?? '') === 'inactive'): ?>
-                                <a href="delete_student.php?id=<?= $student['id'] ?>" class="btn danger" title="Delete Student"
-                                    style="padding:6px 10px; font-size:0.9rem; border-radius: 4px;"
-                                    onclick="return confirm('Delete this student permanently? This cannot be undone.')">
-                                    <i class="fas fa-trash"></i>
-                                </a>
-                            <?php else: ?>
-                                <button class="btn" disabled
-                                    style="padding:6px 10px; font-size:0.9rem; background: #eee; color: #ccc; cursor: not-allowed; border-radius: 4px;"
-                                    title="Deactivate first to delete">
-                                    <i class="fas fa-trash"></i>
-                                </button>
-                            <?php endif; ?>
-                        </div>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-        </tbody>
-    </table>
-
-    <?php if ($totalPages > 1): ?>
-        <div style="margin-top:20px; text-align:center;">
-            <?php for ($p = 1; $p <= $totalPages; $p++): ?>
-                <a href="?page=<?= $p ?>&search=<?= urlencode($search) ?>" class="btn"
-                    style="margin:0 2px; <?= $p == $page ? 'background-color:var(--primary-blue); color:white;' : 'background-color:#eee; color:#333;' ?>">
-                    <?= $p ?>
-                </a>
-            <?php endfor; ?>
-        </div>
-    <?php endif; ?>
-</div>
-
-<!-- Student Status Reason Modal -->
 <style>
+    /* Instant Search hidden class */
+    .search-hidden {
+        display: none !important;
+    }
+
     .student-modal-overlay {
         display: none;
         position: fixed;
@@ -197,7 +60,146 @@ include $depth . 'layout/admin_header.php';
     .student-modal-card.theme-deactivate {
         border-top: 5px solid var(--danger, #e74c3c);
     }
+
+    @keyframes slideUp {
+        from {
+            transform: translateY(20px);
+            opacity: 0;
+        }
+
+        to {
+            transform: translateY(0);
+            opacity: 1;
+        }
+    }
 </style>
+
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+    <h2 class="page-title">Students Management</h2>
+</div>
+
+<div class="card" style="margin-bottom: 20px; padding: 15px;">
+    <div style="display: flex; gap: 10px; align-items: center; border: 1px solid #cbd5e1; padding: 5px 15px; border-radius: 8px; background: white; transition: 0.2s;"
+        id="searchBoxContainer">
+        <i class="fas fa-search" style="color: #94a3b8; font-size: 1.1rem;"></i>
+        <input type="text" id="searchInput" class="form-control" placeholder="Search Name, Email, or Student ID..."
+            style="margin: 0; flex: 1; border: none; box-shadow: none; outline: none; background: transparent; font-size: 0.95rem;">
+    </div>
+</div>
+
+<div class="card">
+    <table class="styled-table">
+        <thead>
+            <tr>
+                <th>Photo</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Phone</th>
+                <th>Student ID</th>
+                <th>Status</th>
+                <th>Profile</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="studentsTableBody">
+            <?php if (empty($students)): ?>
+                <tr id="defaultEmptyRow">
+                    <td colspan="8" style="text-align:center; padding: 20px; color:#888;">
+                        No students found in the database.
+                    </td>
+                </tr>
+            <?php endif; ?>
+
+            <tr id="noMatchesRow" style="display: none;">
+                <td colspan="8" style="text-align:center; padding: 40px 20px; color:#888;">
+                    <i class="fas fa-search"
+                        style="font-size: 2rem; color: #ddd; margin-bottom: 10px; display:block;"></i>
+                    <h3 style="margin:0; color: #555; font-size: 1.1rem;">No matches found</h3>
+                    <p style="margin-top: 5px; font-size: 0.9rem;">Try adjusting your search query.</p>
+                </td>
+            </tr>
+
+            <?php foreach ($students as $student):
+                // REVERTED: Firebase strictly rejects extra query params, so we load the raw URL.
+                $photoUrl = $student['photo_url'] ?? '';
+                $fallback = "https://cdn-icons-png.flaticon.com/512/149/149071.png";
+                $displayImg = !empty($photoUrl) ? $photoUrl : $fallback;
+
+                // 2. DYNAMIC PROFILE COMPLETION VERIFICATION
+                $dbCompleted = $student['has_completed_profile'] ?? false;
+                $hasName = !empty($student['full_name']);
+                $hasPhone = !empty($student['phone_number']);
+                $hasId = !empty($student['student_id']);
+                $hasPhoto = !empty($student['photo_url']);
+
+                $hasClasses = false;
+                if (!empty($student['timetable']) && is_array($student['timetable'])) {
+                    foreach ($student['timetable'] as $day => $classes) {
+                        if (!empty($classes)) {
+                            $hasClasses = true;
+                            break;
+                        }
+                    }
+                }
+                // Override boolean if they physically filled out all the necessary data
+                $isProfileComplete = $dbCompleted || ($hasName && $hasPhone && $hasId && $hasPhoto && $hasClasses);
+                ?>
+                <tr class="student-row">
+                    <td>
+                        <img src="<?= htmlspecialchars($displayImg) ?>" alt="Photo"
+                            style="width:40px; height:40px; border-radius:50%; object-fit:cover; border:1px solid #ddd;"
+                            onerror="this.src='<?= $fallback ?>';">
+                    </td>
+                    <td style="font-weight:600;"><?= htmlspecialchars($student['full_name'] ?? '-') ?></td>
+                    <td><?= htmlspecialchars($student['student_email'] ?? '-') ?></td>
+                    <td><?= htmlspecialchars($student['phone_number'] ?? '-') ?></td>
+                    <td><span class="badge"
+                            style="background:#eee; padding:2px 6px; border-radius:4px; font-size:0.85em;"><?= htmlspecialchars($student['student_id'] ?? '-') ?></span>
+                    </td>
+
+                    <td>
+                        <label class="switch">
+                            <input type="checkbox" <?= ($student['status'] ?? '') === 'active' ? 'checked' : '' ?>
+                                onchange="toggleStudentStatus(this, '<?= $student['id'] ?>')">
+                            <span class="slider"></span>
+                        </label>
+                    </td>
+
+                    <td>
+                        <?php if ($isProfileComplete): ?>
+                            <span style="color:var(--success); font-weight:bold;"><i class="fas fa-check-circle"></i> Yes</span>
+                        <?php else: ?>
+                            <span style="color:#f39c12;"><i class="fas fa-exclamation-circle"></i> No</span>
+                        <?php endif; ?>
+                    </td>
+
+                    <td>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <a href="view_student.php?id=<?= $student['id'] ?>" class="btn" title="View Details"
+                                style="padding:6px 10px; font-size:0.9rem; background: var(--primary-blue); color: white; border-radius: 4px;">
+                                <i class="fas fa-eye"></i>
+                            </a>
+
+                            <?php if (($student['status'] ?? '') === 'inactive'): ?>
+                                <a href="delete_student.php?id=<?= $student['id'] ?>" class="btn danger" title="Delete Student"
+                                    style="padding:6px 10px; font-size:0.9rem; border-radius: 4px;"
+                                    onclick="return confirm('Delete this student permanently? This cannot be undone.')">
+                                    <i class="fas fa-trash"></i>
+                                </a>
+                            <?php else: ?>
+                                <button class="btn" disabled
+                                    style="padding:6px 10px; font-size:0.9rem; background: #eee; color: #ccc; cursor: not-allowed; border-radius: 4px;"
+                                    title="Deactivate first to delete">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            <?php endif; ?>
+                        </div>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+        </tbody>
+    </table>
+</div>
 
 <div id="studentStatusReasonModal" class="student-modal-overlay" onclick="closeStudentStatusModalEvent(event)">
     <div class="student-modal-card" id="studentStatusModalCard">
@@ -224,4 +226,51 @@ include $depth . 'layout/admin_header.php';
 
 <script src="manage_student.js?v=<?= time() ?>"></script>
 
-<?php include $depth . 'layout/admin_footer.php'; ?>
+<script>
+    document.getElementById('searchInput').addEventListener('input', function (e) {
+        const query = e.target.value.toLowerCase().trim();
+        const rows = document.querySelectorAll('#studentsTableBody tr.student-row');
+        const container = document.getElementById('searchBoxContainer');
+        const noMatchesRow = document.getElementById('noMatchesRow');
+        const defaultEmptyRow = document.getElementById('defaultEmptyRow');
+
+        // Input active UI styling
+        if (query.length > 0) {
+            container.style.borderColor = '#3b82f6';
+            container.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
+        } else {
+            container.style.borderColor = '#cbd5e1';
+            container.style.boxShadow = 'none';
+        }
+
+        let hasVisibleRows = false;
+
+        // Loop through all table rows and search their inner text
+        rows.forEach(row => {
+            const rowText = row.innerText.toLowerCase();
+
+            if (rowText.includes(query)) {
+                row.classList.remove('search-hidden');
+                hasVisibleRows = true;
+            } else {
+                row.classList.add('search-hidden');
+            }
+        });
+
+        // Manage Empty States
+        if (defaultEmptyRow && !query) {
+            defaultEmptyRow.style.display = ''; // Show default "database empty"
+            noMatchesRow.style.display = 'none';
+        } else if (defaultEmptyRow && query) {
+            defaultEmptyRow.style.display = 'none';
+        }
+
+        if (!hasVisibleRows && rows.length > 0) {
+            noMatchesRow.style.display = ''; // Show "No matches found"
+        } else {
+            noMatchesRow.style.display = 'none';
+        }
+    });
+</script>
+
+<?php include $depth . 'layout/admin/footer.php'; ?>

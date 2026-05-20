@@ -82,7 +82,7 @@ if (count($existingStops) > 2) {
 
 $pageTitle = 'Edit Route';
 $depth = '../../';
-include $depth . 'layout/admin_header.php';
+include $depth . 'layout/admin/header.php';
 ?>
 
 <style>
@@ -423,4 +423,4 @@ include $depth . 'layout/admin_header.php';
         </div>
     </form>
 </div>
-<?php include $depth . 'layout/admin_footer.php'; ?>
+<?php include $depth . 'layout/admin/footer.php'; ?>

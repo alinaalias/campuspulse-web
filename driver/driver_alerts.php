@@ -3,7 +3,7 @@ session_start();
 require_once '../config.php';
 date_default_timezone_set('Asia/Kuala_Lumpur');
 
-// 1. Security Check
+
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'driver') {
     header('Location: ../login.php');
     exit();
@@ -14,8 +14,8 @@ $now = time();
 $lastReadTime = 0;
 
 try {
-    // --- NEW: MARK AS READ & MEMORY LOGIC ---
-    // A. Fetch the time the driver last looked at this page
+
+
     $driverRef = $firestore->database()->collection('Staffs')->document($driverId);
     $driverSnap = $driverRef->snapshot();
 
@@ -23,11 +23,11 @@ try {
         $lastReadTime = $driverSnap->data()['last_alert_read_time'] ?? 0;
     }
 
-    // B. Update the timestamp to NOW so they won't be "New" next time
+
     $driverRef->update([
         ['path' => 'last_alert_read_time', 'value' => $now]
     ]);
-    // ----------------------------------------
+
 } catch (Exception $e) {
     // Fail silently, just means the badge might not clear
 }
@@ -35,7 +35,7 @@ try {
 $alerts = [];
 
 try {
-    // 2. Fetch Alerts - Using our new status logic
+
     $docs = $firestore->database()->collection('Announcements')
         ->where('status', 'in', ['active', 'scheduled'])
         ->orderBy('created_at', 'DESC')
@@ -46,31 +46,29 @@ try {
         $audience = $data['target_audience'] ?? 'all';
         $status = $data['status'] ?? 'active';
 
-        // --- THE GATEKEEPER LOGIC ---
-        // 1. Audience Filter
+
         if ($audience !== 'driver' && $audience !== 'all')
             continue;
 
-        // 2. Expiry Filter (Auto-hide old traffic/accidents)
+
         if (!empty($data['expires_at']) && strtotime($data['expires_at']) <= $now)
             continue;
 
-        // 3. Scheduling Filter (Don't show future posts yet)
+
         $publishTime = !empty($data['schedule_time']) ? strtotime($data['schedule_time']) : strtotime($data['created_at']);
         if ($publishTime > $now)
             continue;
 
-        // 4. Manual Revoke Check
         if ($status === 'revoked')
             continue;
 
-        // Success - format for UI
+
         $data['id'] = $doc->id();
 
-        // --- NEW: Check if this alert was published AFTER the driver last checked
+
         $data['is_new'] = ($publishTime > $lastReadTime);
 
-        // Relative Time Calculation
+
         $diff = $now - $publishTime;
         if ($diff < 60) {
             $data['relative_time'] = 'Just now';
@@ -124,7 +122,7 @@ try {
     // Fail silently for personal notifications too
 }
 
-// 3. Check for Almost Expired Credentials
+
 try {
     $driverData = $firestore->database()->collection('Staffs')->document($driverId)->snapshot()->data();
     $todayDate = new DateTime('today');
@@ -155,9 +153,10 @@ try {
             'relative_time' => 'System Alert'
         ];
     }
-} catch (Exception $e) {}
+} catch (Exception $e) {
+}
 
-// 4. Merge & Sort Arrays by timestamp
+
 foreach ($alerts as &$a) {
     if (!isset($a['timestamp'])) {
         $a['timestamp'] = !empty($a['schedule_time']) ? strtotime($a['schedule_time']) : strtotime($a['created_at'] ?? 'now');
@@ -165,162 +164,108 @@ foreach ($alerts as &$a) {
 }
 unset($a);
 
-usort($alerts, function($a, $b) {
+usort($alerts, function ($a, $b) {
     return $b['timestamp'] <=> $a['timestamp'];
 });
+
+$pageTitle = 'Driver Notifications';
+$extraHead = '
+<style>
+    body {
+        background-color: #f8f9fc;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .alerts-header {
+        background: var(--primary-blue);
+        color: white;
+        padding: 30px 20px 80px 20px;
+        border-bottom-left-radius: 35px;
+        border-bottom-right-radius: 35px;
+        position: relative;
+        z-index: 1;
+    }
+
+    .alerts-container {
+        margin-top: -50px;
+        padding: 0 20px 100px 20px;
+        position: relative;
+        z-index: 2;
+        flex: 1;
+    }
+
+    .alert-card {
+        background: white;
+        border-radius: 20px;
+        padding: 20px;
+        margin-bottom: 15px;
+        box-shadow: 0 5px 20px rgba(0, 0, 0, 0.04);
+        border-left: 6px solid #ddd;
+        transition: all 0.3s ease;
+    }
+
+    .alert-card.is-new {
+        background-color: #f0f8ff;
+        box-shadow: 0 8px 25px rgba(52, 152, 219, 0.15);
+    }
+
+    .badge-new {
+        color: var(--primary-blue);
+        font-weight: 700;
+        font-size: 0.7rem;
+        margin-left: 5px;
+        background: rgba(52, 152, 219, 0.15);
+        padding: 2px 6px;
+        border-radius: 4px;
+    }
+
+    .alert-emergency { border-left-color: #e74c3c; }
+    .alert-emergency .icon-circle { background: #fdedec; color: #e74c3c; }
+    .alert-warning { border-left-color: #f1c40f; }
+    .alert-warning .icon-circle { background: #fef9e7; color: #f39c12; }
+    .alert-info { border-left-color: #3498db; }
+    .alert-info .icon-circle { background: #ebf5fb; color: #3498db; }
+
+    .icon-circle {
+        width: 45px;
+        height: 45px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.2rem;
+        margin-right: 15px;
+        flex-shrink: 0;
+    }
+
+    .alert-title { font-size: 1rem; font-weight: 700; color: #333; line-height: 1.2; }
+    .alert-time { font-size: 0.7rem; color: #bbb; text-transform: uppercase; font-weight: 600; display: flex; align-items: center; }
+    .alert-body { font-size: 0.9rem; color: #666; line-height: 1.5; margin-top: 10px; }
+
+    .location-badge {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px dashed #eee;
+        font-size: 0.8rem;
+        color: #e74c3c;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 80px 20px;
+        color: #ccc;
+        background: white;
+        border-radius: 20px;
+    }
+</style>';
+include '../layout/driver/header.php';
 ?>
-
-<!DOCTYPE html>
-<html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Driver Notifications</title>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="../css/style.css">
-
-    <style>
-        body {
-            background-color: #f8f9fc;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .alerts-header {
-            background: var(--primary-blue);
-            color: white;
-            padding: 30px 20px 80px 20px;
-            border-bottom-left-radius: 35px;
-            border-bottom-right-radius: 35px;
-            position: relative;
-            z-index: 1;
-        }
-
-        .alerts-container {
-            margin-top: -50px;
-            padding: 0 20px 100px 20px;
-            position: relative;
-            z-index: 2;
-            flex: 1;
-        }
-
-        .alert-card {
-            background: white;
-            border-radius: 20px;
-            padding: 20px;
-            margin-bottom: 15px;
-            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.04);
-            border-left: 6px solid #ddd;
-            transition: all 0.3s ease;
-        }
-
-        /* --- NEW: Style for Unread Alerts --- */
-        .alert-card.is-new {
-            background-color: #f0f8ff;
-            /* Subtle light blue tint */
-            box-shadow: 0 8px 25px rgba(52, 152, 219, 0.15);
-            /* Slight blue glow */
-        }
-
-        .badge-new {
-            color: var(--primary-blue);
-            font-weight: 700;
-            font-size: 0.7rem;
-            margin-left: 5px;
-            background: rgba(52, 152, 219, 0.15);
-            padding: 2px 6px;
-            border-radius: 4px;
-        }
-
-        /* Severity Colors based on our new Tag System */
-        .alert-emergency {
-            border-left-color: #e74c3c;
-        }
-
-        .alert-emergency .icon-circle {
-            background: #fdedec;
-            color: #e74c3c;
-        }
-
-        .alert-warning {
-            border-left-color: #f1c40f;
-        }
-
-        .alert-warning .icon-circle {
-            background: #fef9e7;
-            color: #f39c12;
-        }
-
-        .alert-info {
-            border-left-color: #3498db;
-        }
-
-        .alert-info .icon-circle {
-            background: #ebf5fb;
-            color: #3498db;
-        }
-
-        .icon-circle {
-            width: 45px;
-            height: 45px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.2rem;
-            margin-right: 15px;
-            flex-shrink: 0;
-        }
-
-        .alert-title {
-            font-size: 1rem;
-            font-weight: 700;
-            color: #333;
-            line-height: 1.2;
-        }
-
-        .alert-time {
-            font-size: 0.7rem;
-            color: #bbb;
-            text-transform: uppercase;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-        }
-
-        .alert-body {
-            font-size: 0.9rem;
-            color: #666;
-            line-height: 1.5;
-            margin-top: 10px;
-        }
-
-        .location-badge {
-            margin-top: 12px;
-            padding-top: 12px;
-            border-top: 1px dashed #eee;
-            font-size: 0.8rem;
-            color: #e74c3c;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 80px 20px;
-            color: #ccc;
-            background: white;
-            border-radius: 20px;
-        }
-    </style>
-</head>
-
-<body>
 
     <div class="alerts-header">
         <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -346,13 +291,11 @@ usort($alerts, function($a, $b) {
         <?php else: ?>
 
             <?php foreach ($alerts as $alert):
-                // Determine styling based on the #Tag
                 $tag = $alert['tag'] ?? '#Info';
                 $cardStyle = 'alert-info';
                 $icon = 'fa-info-circle';
                 $iconClassEx = '';
 
-                // Add the 'is-new' class if it's unread
                 $newClass = !empty($alert['is_new']) ? 'is-new' : '';
 
                 if (strpos($tag, 'Emergency') !== false) {
@@ -385,6 +328,15 @@ usort($alerts, function($a, $b) {
                         <?= nl2br(htmlspecialchars($alert['message'])) ?>
                     </div>
 
+                    <!-- NEW: DISPLAY ADDITIONAL MESSAGE FOR DRIVERS -->
+                    <?php if (!empty($alert['additional_message'])): ?>
+                        <div
+                            style="margin-top: 10px; padding: 10px 12px; background: #f8f9fa; border-left: 3px solid #cbd5e0; border-radius: 4px; font-size: 0.85rem; color: #4a5568;">
+                            <strong style="color: #2d3748;"><i class="fas fa-info-circle"></i> Details:</strong><br>
+                            <span style="font-style: italic;"><?= nl2br(htmlspecialchars($alert['additional_message'])) ?></span>
+                        </div>
+                    <?php endif; ?>
+
                     <?php if (!empty($alert['location_name'])): ?>
                         <div class="location-badge">
                             <i class="fas fa-map-marker-alt"></i> Near: <?= htmlspecialchars($alert['location_name']) ?>
@@ -397,8 +349,4 @@ usort($alerts, function($a, $b) {
 
     </div>
 
-    <?php include 'driver_navbar.php'; ?>
-
-</body>
-
-</html>
+<?php include '../layout/driver/footer.php'; ?>

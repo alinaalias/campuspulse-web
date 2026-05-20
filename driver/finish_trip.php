@@ -22,15 +22,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $driverId = $_SESSION['user_id'];
     $passengerCount = 0;
 
+    // Fetch the Driver's assigned shuttle directly as the ultimate source of truth
+    $staffSnap = $db->collection('Staffs')->document($driverId)->snapshot();
+    $driverData = $staffSnap->exists() ? $staffSnap->data() : [];
+    $driverShuttleId = $driverData['assigned_shuttle_id'] ?? null;
+
     if (strpos($rawId, 'SCHED:') === 0) {
         // --- SCHEDULE FINISH LOGIC ---
         $scheduleId = substr($rawId, 6);
+
+        // THE FIX 3: STRICT BLOCK - Prevent finishing if passengers are still onboard
+        $onboardBookings = $db->collection('Bookings')
+            ->where('schedule_id', '=', $scheduleId)
+            ->where('status', '=', 'onboard')
+            ->documents();
+
+        $remainingCount = 0;
+        foreach ($onboardBookings as $b) {
+            $remainingCount++;
+        }
+
+        if ($remainingCount > 0) {
+            echo "<script>alert('ERROR: Cannot finish trip! There are still $remainingCount passenger(s) onboard. Please ask them to scan out first.'); window.history.back();</script>";
+            exit();
+        }
+
         $schedRef = $db->collection('Schedules')->document($scheduleId);
         $schedSnap = $schedRef->snapshot();
 
         if ($schedSnap->exists()) {
             $data = $schedSnap->data();
-            $shuttleId = $data['shuttle_id'] ?? '';
+            $shuttleId = !empty($data['shuttle_id']) ? $data['shuttle_id'] : $driverShuttleId;
 
             $updateFields = [
                 ['path' => 'status', 'value' => 'completed'],
@@ -43,56 +65,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             try {
                 $schedRef->update($updateFields);
-            } catch (Exception $e) {}
+            } catch (Exception $e) {
+            }
 
             if (!empty($shuttleId)) {
                 try {
                     $db->collection('Shuttles')->document($shuttleId)->update([
-                        ['path' => 'job_status', 'value' => 'Idle']
+                        ['path' => 'job_status', 'value' => 'idle']
                     ]);
-                } catch (Exception $e) {}
-            }
-
-            try {
-                $onboardBookings = $db->collection('Bookings')
-                    ->where('schedule_id', '=', $scheduleId)
-                    ->where('status', '=', 'onboard')
-                    ->documents();
-
-                foreach ($onboardBookings as $booking) {
-                    $booking->reference()->update([
-                        ['path' => 'status', 'value' => 'completed']
-                    ]);
-                    $passengerCount++;
+                } catch (Exception $e) {
                 }
-            } catch (Exception $e) {}
+            }
         }
     } elseif (strpos($rawId, 'BOOK:') === 0) {
         // --- ON-DEMAND FINISH LOGIC ---
         $bookingId = substr($rawId, 5);
-        
+
         try {
             $db->collection('Bookings')->document($bookingId)->update([
                 ['path' => 'status', 'value' => 'completed'],
                 ['path' => 'updated_at', 'value' => date('Y-m-d H:i:s')]
             ]);
-            
+
             // Check if we need to set the shuttle to IDLE
             $activeCheck = $db->collection('Bookings')
                 ->where('driver_id', '=', $driverId)
-                ->where('status', 'in', ['confirmed', 'arriving', 'onboard'])
+                ->where('status', 'in', ['confirmed', 'arriving', 'arrived', 'onboard'])
                 ->documents();
 
-            if (empty($activeCheck)) {
-                $staffSnap = $db->collection('Staffs')->document($driverId)->snapshot();
-                $shuttleId = $staffSnap->data()['assigned_shuttle_id'] ?? null;
-                if ($shuttleId) {
-                    $db->collection('Shuttles')->document($shuttleId)->update([
-                        ['path' => 'job_status', 'value' => 'Idle']
+            // THE FIX 1: Use Firestore's native isEmpty() instead of PHP's native empty()
+            if ($activeCheck->isEmpty()) {
+                if (!empty($driverShuttleId)) {
+                    $db->collection('Shuttles')->document($driverShuttleId)->update([
+                        ['path' => 'job_status', 'value' => 'idle']
                     ]);
                 }
             }
-        } catch (Exception $e) {}
+        } catch (Exception $e) {
+        }
     }
 
     // --- CLEAR CURRENT TRIP ID ---
@@ -100,7 +110,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $db->collection('Staffs')->document($driverId)->update([
             ['path' => 'current_trip_id', 'value' => '']
         ]);
-    } catch (Exception $e) {}
+    } catch (Exception $e) {
+    }
 
     // --- Redirect to Success State ---
     $finalId = isset($scheduleId) ? $scheduleId : (isset($bookingId) ? $bookingId : '');
