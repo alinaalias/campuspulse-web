@@ -32,8 +32,8 @@
 
 namespace Google\ApiCore\Options;
 
-use Google\ApiCore\ValidationException;
 use BadMethodCallException;
+use Google\ApiCore\ValidationException;
 
 /**
  * Trait implemented by any class representing an associative array of PHP options.
@@ -57,6 +57,9 @@ trait OptionsTrait
         return isset($this->$offset);
     }
 
+    /**
+     * @return mixed
+     */
     #[\ReturnTypeWillChange]
     public function offsetGet($offset)
     {
@@ -83,7 +86,9 @@ trait OptionsTrait
     {
         $arr = [];
         foreach (get_object_vars($this) as $key => $value) {
-            $arr[$key] = $value;
+            $arr[$key] = $value instanceof OptionsInterface
+                 ? $value->toArray()
+                 : $value;
         }
         return $arr;
     }

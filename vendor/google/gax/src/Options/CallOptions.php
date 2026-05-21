@@ -35,16 +35,16 @@ namespace Google\ApiCore\Options;
 use ArrayAccess;
 use Google\ApiCore\CredentialsWrapper;
 use Google\ApiCore\RetrySettings;
-use Google\ApiCore\TransportInterface;
 
 /**
  * The CallOptions class provides typing to the associative array of options
- * passed to transport RPC methods. See {@see TransportInterface::startUnaryCall()},
- * {@see TransportInterface::startBidiStreamingCall()},
- * {@see TransportInterface::startClientStreamingCall()}, and
- * {@see TransportInterface::startServerStreamingCall()}.
+ * passed to transport RPC methods. See
+ * {@see \Google\ApiCore\Transport\TransportInterface::startUnaryCall()},
+ * {@see \Google\ApiCore\Transport\TransportInterface::startBidiStreamingCall()},
+ * {@see \Google\ApiCore\Transport\TransportInterface::startClientStreamingCall()}, and
+ * {@see \Google\ApiCore\Transport\TransportInterface::startServerStreamingCall()}.
  */
-class CallOptions implements ArrayAccess
+class CallOptions implements ArrayAccess, OptionsInterface
 {
     use OptionsTrait;
 
@@ -59,8 +59,8 @@ class CallOptions implements ArrayAccess
      * @param array $options {
      *     Call options
      *
-     *     @type array $headers
-     *           Key-value array containing headers
+     *     @type array<string, array<string>> $headers
+     *           Key-value array containing headers.
      *     @type int $timeoutMillis
      *           The timeout in milliseconds for the call.
      *     @type array $transportOptions
@@ -93,17 +93,21 @@ class CallOptions implements ArrayAccess
     /**
      * @param array $headers
      */
-    public function setHeaders(array $headers)
+    public function setHeaders(array $headers): self
     {
         $this->headers = $headers;
+
+        return $this;
     }
 
     /**
      * @param int|null $timeoutMillis
      */
-    public function setTimeoutMillis(?int $timeoutMillis)
+    public function setTimeoutMillis(?int $timeoutMillis): self
     {
         $this->timeoutMillis = $timeoutMillis;
+
+        return $this;
     }
 
     /**
@@ -125,24 +129,32 @@ class CallOptions implements ArrayAccess
      *           See {@link https://docs.guzzlephp.org/en/stable/request-options.html}.
      * }
      */
-    public function setTransportOptions(array $transportOptions)
+    public function setTransportOptions(array $transportOptions): self
     {
         $this->transportOptions = $transportOptions;
+
+        return $this;
     }
 
     /**
      * @deprecated use CallOptions::setTransportOptions
      */
-    public function setTransportSpecificOptions(array $transportSpecificOptions)
+    public function setTransportSpecificOptions(array $transportSpecificOptions): self
     {
         $this->setTransportOptions($transportSpecificOptions);
+
+        return $this;
     }
 
     /**
      * @param RetrySettings|array|null $retrySettings
+     *
+     * @return $this
      */
-    public function setRetrySettings($retrySettings)
+    public function setRetrySettings($retrySettings): self
     {
         $this->retrySettings = $retrySettings;
+
+        return $this;
     }
 }

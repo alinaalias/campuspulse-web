@@ -8,31 +8,32 @@ use InvalidArgumentException;
 
 final class VerifyIdToken
 {
-    private string $token = '';
-
-    /** @var int */
-    private $leewayInSeconds = 0;
-
-    private ?string $expectedTenantId = null;
-
-    private function __construct()
-    {
+    /**
+     * @param non-empty-string $token
+     * @param int<0, max> $leewayInSeconds
+     * @param non-empty-string|null $expectedTenantId
+     */
+    private function __construct(
+        private readonly string $token,
+        private readonly int $leewayInSeconds,
+        private readonly ?string $expectedTenantId,
+    ) {
     }
 
+    /**
+     * @param non-empty-string $token
+     */
     public static function withToken(string $token): self
     {
-        $action = new self();
-        $action->token = $token;
-
-        return $action;
+        return new self($token, 0, null);
     }
 
+    /**
+     * @param non-empty-string $tenantId
+     */
     public function withExpectedTenantId(string $tenantId): self
     {
-        $action = clone $this;
-        $action->expectedTenantId = $tenantId;
-
-        return $action;
+        return new self($this->token, $this->leewayInSeconds, $tenantId);
     }
 
     public function withLeewayInSeconds(int $seconds): self
@@ -41,25 +42,28 @@ final class VerifyIdToken
             throw new InvalidArgumentException('Leeway must not be negative');
         }
 
-        $action = clone $this;
-        $action->leewayInSeconds = $seconds;
-
-        return $action;
+        return new self($this->token, $seconds, $this->expectedTenantId);
     }
 
+    /**
+     * @return non-empty-string
+     */
     public function token(): string
     {
         return $this->token;
     }
 
     /**
-     * @return string|null
+     * @return non-empty-string|null
      */
-    public function expectedTenantId()
+    public function expectedTenantId(): ?string
     {
         return $this->expectedTenantId;
     }
 
+    /**
+     * @return int<0, max>
+     */
     public function leewayInSeconds(): int
     {
         return $this->leewayInSeconds;

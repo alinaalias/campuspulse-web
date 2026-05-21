@@ -28,6 +28,7 @@ use Google\ApiCore\ApiException;
 use Google\ApiCore\BidiStream;
 use Google\ApiCore\CredentialsWrapper;
 use Google\ApiCore\GapicClientTrait;
+use Google\ApiCore\Options\ClientOptions;
 use Google\ApiCore\PagedListResponse;
 use Google\ApiCore\RetrySettings;
 use Google\ApiCore\ServerStream;
@@ -35,6 +36,7 @@ use Google\ApiCore\Transport\TransportInterface;
 use Google\ApiCore\ValidationException;
 use Google\Auth\FetchAuthTokenInterface;
 use Google\Cloud\Firestore\V1\BatchGetDocumentsRequest;
+use Google\Cloud\Firestore\V1\BatchGetDocumentsResponse;
 use Google\Cloud\Firestore\V1\BatchWriteRequest;
 use Google\Cloud\Firestore\V1\BatchWriteResponse;
 use Google\Cloud\Firestore\V1\BeginTransactionRequest;
@@ -44,16 +46,21 @@ use Google\Cloud\Firestore\V1\CommitResponse;
 use Google\Cloud\Firestore\V1\CreateDocumentRequest;
 use Google\Cloud\Firestore\V1\DeleteDocumentRequest;
 use Google\Cloud\Firestore\V1\Document;
+use Google\Cloud\Firestore\V1\ExecutePipelineRequest;
+use Google\Cloud\Firestore\V1\ExecutePipelineResponse;
 use Google\Cloud\Firestore\V1\GetDocumentRequest;
 use Google\Cloud\Firestore\V1\ListCollectionIdsRequest;
 use Google\Cloud\Firestore\V1\ListDocumentsRequest;
 use Google\Cloud\Firestore\V1\PartitionQueryRequest;
 use Google\Cloud\Firestore\V1\RollbackRequest;
 use Google\Cloud\Firestore\V1\RunAggregationQueryRequest;
+use Google\Cloud\Firestore\V1\RunAggregationQueryResponse;
 use Google\Cloud\Firestore\V1\RunQueryRequest;
+use Google\Cloud\Firestore\V1\RunQueryResponse;
 use Google\Cloud\Firestore\V1\UpdateDocumentRequest;
 use Google\Cloud\Firestore\V1\Write;
 use GuzzleHttp\Promise\PromiseInterface;
+use Psr\Log\LoggerInterface;
 
 /**
  * Service Description: The Cloud Firestore service.
@@ -68,17 +75,17 @@ use GuzzleHttp\Promise\PromiseInterface;
  * This class provides the ability to make remote calls to the backing service through method
  * calls that map to API methods.
  *
- * @method PromiseInterface batchWriteAsync(BatchWriteRequest $request, array $optionalArgs = [])
- * @method PromiseInterface beginTransactionAsync(BeginTransactionRequest $request, array $optionalArgs = [])
- * @method PromiseInterface commitAsync(CommitRequest $request, array $optionalArgs = [])
- * @method PromiseInterface createDocumentAsync(CreateDocumentRequest $request, array $optionalArgs = [])
- * @method PromiseInterface deleteDocumentAsync(DeleteDocumentRequest $request, array $optionalArgs = [])
- * @method PromiseInterface getDocumentAsync(GetDocumentRequest $request, array $optionalArgs = [])
- * @method PromiseInterface listCollectionIdsAsync(ListCollectionIdsRequest $request, array $optionalArgs = [])
- * @method PromiseInterface listDocumentsAsync(ListDocumentsRequest $request, array $optionalArgs = [])
- * @method PromiseInterface partitionQueryAsync(PartitionQueryRequest $request, array $optionalArgs = [])
- * @method PromiseInterface rollbackAsync(RollbackRequest $request, array $optionalArgs = [])
- * @method PromiseInterface updateDocumentAsync(UpdateDocumentRequest $request, array $optionalArgs = [])
+ * @method PromiseInterface<BatchWriteResponse> batchWriteAsync(BatchWriteRequest $request, array $optionalArgs = [])
+ * @method PromiseInterface<BeginTransactionResponse> beginTransactionAsync(BeginTransactionRequest $request, array $optionalArgs = [])
+ * @method PromiseInterface<CommitResponse> commitAsync(CommitRequest $request, array $optionalArgs = [])
+ * @method PromiseInterface<Document> createDocumentAsync(CreateDocumentRequest $request, array $optionalArgs = [])
+ * @method PromiseInterface<void> deleteDocumentAsync(DeleteDocumentRequest $request, array $optionalArgs = [])
+ * @method PromiseInterface<Document> getDocumentAsync(GetDocumentRequest $request, array $optionalArgs = [])
+ * @method PromiseInterface<PagedListResponse> listCollectionIdsAsync(ListCollectionIdsRequest $request, array $optionalArgs = [])
+ * @method PromiseInterface<PagedListResponse> listDocumentsAsync(ListDocumentsRequest $request, array $optionalArgs = [])
+ * @method PromiseInterface<PagedListResponse> partitionQueryAsync(PartitionQueryRequest $request, array $optionalArgs = [])
+ * @method PromiseInterface<void> rollbackAsync(RollbackRequest $request, array $optionalArgs = [])
+ * @method PromiseInterface<Document> updateDocumentAsync(UpdateDocumentRequest $request, array $optionalArgs = [])
  */
 final class FirestoreClient
 {
@@ -131,20 +138,29 @@ final class FirestoreClient
     /**
      * Constructor.
      *
-     * @param array $options {
+     * @param array|ClientOptions $options {
      *     Optional. Options for configuring the service API wrapper.
      *
      *     @type string $apiEndpoint
      *           The address of the API remote host. May optionally include the port, formatted
      *           as "<uri>:<port>". Default 'firestore.googleapis.com:443'.
-     *     @type string|array|FetchAuthTokenInterface|CredentialsWrapper $credentials
-     *           The credentials to be used by the client to authorize API calls. This option
-     *           accepts either a path to a credentials file, or a decoded credentials file as a
-     *           PHP array.
-     *           *Advanced usage*: In addition, this option can also accept a pre-constructed
-     *           {@see \Google\Auth\FetchAuthTokenInterface} object or
-     *           {@see \Google\ApiCore\CredentialsWrapper} object. Note that when one of these
-     *           objects are provided, any settings in $credentialsConfig will be ignored.
+     *     @type FetchAuthTokenInterface|CredentialsWrapper $credentials
+     *           This option should only be used with a pre-constructed
+     *           {@see FetchAuthTokenInterface} or {@see CredentialsWrapper} object. Note that
+     *           when one of these objects are provided, any settings in $credentialsConfig will
+     *           be ignored.
+     *           **Important**: If you are providing a path to a credentials file, or a decoded
+     *           credentials file as a PHP array, this usage is now DEPRECATED. Providing an
+     *           unvalidated credential configuration to Google APIs can compromise the security
+     *           of your systems and data. It is recommended to create the credentials explicitly
+     *           ```
+     *           use Google\Auth\Credentials\ServiceAccountCredentials;
+     *           use Google\Cloud\Firestore\V1\FirestoreClient;
+     *           $creds = new ServiceAccountCredentials($scopes, $json);
+     *           $options = new FirestoreClient(['credentials' => $creds]);
+     *           ```
+     *           {@see
+     *           https://cloud.google.com/docs/authentication/external/externally-sourced-credentials}
      *     @type array $credentialsConfig
      *           Options used to configure credentials, including auth token caching, for the
      *           client. For a full list of supporting configuration options, see
@@ -178,11 +194,16 @@ final class FirestoreClient
      *     @type callable $clientCertSource
      *           A callable which returns the client cert as a string. This can be used to
      *           provide a certificate and private key to the transport layer for mTLS.
+     *     @type false|LoggerInterface $logger
+     *           A PSR-3 compliant logger. If set to false, logging is disabled, ignoring the
+     *           'GOOGLE_SDK_PHP_LOGGING' environment flag
+     *     @type string $universeDomain
+     *           The service domain for the client. Defaults to 'googleapis.com'.
      * }
      *
      * @throws ValidationException
      */
-    public function __construct(array $options = [])
+    public function __construct(array|ClientOptions $options = [])
     {
         $clientOptions = $this->buildClientOptions($options);
         $this->setClientOptions($clientOptions);
@@ -215,7 +236,7 @@ final class FirestoreClient
      *           Timeout to use for this call.
      * }
      *
-     * @return ServerStream
+     * @return ServerStream<BatchGetDocumentsResponse>
      *
      * @throws ApiException Thrown if the API call fails.
      */
@@ -359,6 +380,28 @@ final class FirestoreClient
     public function deleteDocument(DeleteDocumentRequest $request, array $callOptions = []): void
     {
         $this->startApiCall('DeleteDocument', $request, $callOptions)->wait();
+    }
+
+    /**
+     * Executes a pipeline query.
+     *
+     * @example samples/V1/FirestoreClient/execute_pipeline.php
+     *
+     * @param ExecutePipelineRequest $request     A request to house fields associated with the call.
+     * @param array                  $callOptions {
+     *     Optional.
+     *
+     *     @type int $timeoutMillis
+     *           Timeout to use for this call.
+     * }
+     *
+     * @return ServerStream<ExecutePipelineResponse>
+     *
+     * @throws ApiException Thrown if the API call fails.
+     */
+    public function executePipeline(ExecutePipelineRequest $request, array $callOptions = []): ServerStream
+    {
+        return $this->startApiCall('ExecutePipeline', $request, $callOptions);
     }
 
     /**
@@ -538,7 +581,7 @@ final class FirestoreClient
      *           Timeout to use for this call.
      * }
      *
-     * @return ServerStream
+     * @return ServerStream<RunAggregationQueryResponse>
      *
      * @throws ApiException Thrown if the API call fails.
      */
@@ -560,7 +603,7 @@ final class FirestoreClient
      *           Timeout to use for this call.
      * }
      *
-     * @return ServerStream
+     * @return ServerStream<RunQueryResponse>
      *
      * @throws ApiException Thrown if the API call fails.
      */

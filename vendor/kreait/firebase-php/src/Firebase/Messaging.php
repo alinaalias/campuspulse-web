@@ -4,91 +4,113 @@ declare(strict_types=1);
 
 namespace Kreait\Firebase;
 
+use Beste\Json;
 use GuzzleHttp\Promise\Utils;
 use Kreait\Firebase\Exception\InvalidArgumentException;
 use Kreait\Firebase\Exception\Messaging\InvalidArgument;
 use Kreait\Firebase\Exception\Messaging\NotFound;
+use Kreait\Firebase\Exception\MessagingApiExceptionConverter;
 use Kreait\Firebase\Exception\MessagingException;
-use Kreait\Firebase\Http\ResponseWithSubResponses;
 use Kreait\Firebase\Messaging\ApiClient;
 use Kreait\Firebase\Messaging\AppInstance;
 use Kreait\Firebase\Messaging\AppInstanceApiClient;
-use Kreait\Firebase\Messaging\CloudMessage;
-use Kreait\Firebase\Messaging\Http\Request\SendMessage;
-use Kreait\Firebase\Messaging\Http\Request\SendMessages;
-use Kreait\Firebase\Messaging\Http\Request\SendMessageToTokens;
 use Kreait\Firebase\Messaging\Message;
-use Kreait\Firebase\Messaging\Messages;
+use Kreait\Firebase\Messaging\MessageTarget;
 use Kreait\Firebase\Messaging\MulticastSendReport;
+use Kreait\Firebase\Messaging\Processor\SetApnsContentAvailableIfNeeded;
+use Kreait\Firebase\Messaging\Processor\SetApnsPushTypeIfNeeded;
+use Kreait\Firebase\Messaging\RawMessageFromArray;
 use Kreait\Firebase\Messaging\RegistrationToken;
 use Kreait\Firebase\Messaging\RegistrationTokens;
+use Kreait\Firebase\Messaging\SendReport;
 use Kreait\Firebase\Messaging\Topic;
-use Kreait\Firebase\Project\ProjectId;
-use Kreait\Firebase\Util\JSON;
+use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
+use Throwable;
 
-class Messaging implements Contract\Messaging
+use function array_key_exists;
+use function array_keys;
+use function array_map;
+
+/**
+ * @internal
+ */
+final class Messaging implements Contract\Messaging
 {
-    private string $projectId;
-
-    private ApiClient $messagingApi;
-
-    private AppInstanceApiClient $appInstanceApi;
-
-    /**
-     * @internal
-     */
-    public function __construct(ProjectId $projectId, ApiClient $messagingApiClient, AppInstanceApiClient $appInstanceApiClient)
-    {
-        $this->messagingApi = $messagingApiClient;
-        $this->appInstanceApi = $appInstanceApiClient;
-        $this->projectId = $projectId->value();
+    public function __construct(
+        private readonly ApiClient $messagingApi,
+        private readonly AppInstanceApiClient $appInstanceApi,
+        private readonly MessagingApiExceptionConverter $exceptionConverter,
+    ) {
     }
 
-    public function send($message, bool $validateOnly = false): array
+    public function send(Message|array $message, bool $validateOnly = false): array
     {
         $message = $this->makeMessage($message);
 
-        $request = new SendMessage($this->projectId, $message, $validateOnly);
-
-        try {
-            $response = $this->messagingApi->send($request);
-        } catch (NotFound $e) {
-            $token = $message->jsonSerialize()['token'] ?? null;
-            if ($token) {
-                throw NotFound::becauseTokenNotFound($token, $e->errors());
-            }
-
-            throw $e;
+        if (!$this->messageHasTarget($message)) {
+            throw new InvalidArgument('The given message is missing a target');
         }
 
-        return JSON::decode((string) $response->getBody(), true);
+        $reports = $this->sendAll([$message], $validateOnly)->getItems();
+        $report = array_shift($reports);
+        assert($report instanceof SendReport);
+
+        if ($report->isSuccess()) {
+            return $report->result() ?? [];
+        }
+
+        $error = $report->error();
+        assert($error instanceof MessagingException);
+
+        throw $error;
     }
 
     public function sendMulticast($message, $registrationTokens, bool $validateOnly = false): MulticastSendReport
     {
-        $message = $this->makeMessage($message);
-        $registrationTokens = $this->ensureNonEmptyRegistrationTokens($registrationTokens);
+        $message = $message instanceof Message ? $message : new RawMessageFromArray($message);
+        $registrationTokens = RegistrationTokens::fromValue($registrationTokens);
 
-        $request = new SendMessageToTokens($this->projectId, $message, $registrationTokens, $validateOnly);
-        /** @var ResponseWithSubResponses $response */
-        $response = $this->messagingApi->send($request);
+        $messages = [];
 
-        return MulticastSendReport::fromRequestsAndResponses($request->subRequests(), $response->subResponses());
+        foreach ($registrationTokens as $registrationToken) {
+            $messages[] = $this->withChangedTarget($message, MessageTarget::TOKEN, $registrationToken->value());
+        }
+
+        return $this->sendAll($messages, $validateOnly);
     }
 
     public function sendAll($messages, bool $validateOnly = false): MulticastSendReport
     {
-        $ensuredMessages = [];
+        $messages = $this->ensureMessages($messages);
+        $requests = $this->createSendRequests($messages, $validateOnly);
+        $sendReports = array_fill(0, count($messages), null);
 
-        foreach ($messages as $message) {
-            $ensuredMessages[] = $this->makeMessage($message);
-        }
+        $config = [
+            'fulfilled' => function (ResponseInterface $response, int $index) use ($messages, &$sendReports): void {
+                $message = $messages[$index];
 
-        $request = new SendMessages($this->projectId, new Messages(...$ensuredMessages), $validateOnly);
-        /** @var ResponseWithSubResponses $response */
-        $response = $this->messagingApi->send($request);
+                $json = Json::decode((string) $response->getBody(), true);
 
-        return MulticastSendReport::fromRequestsAndResponses($request->subRequests(), $response->subResponses());
+                $sendReports[$index] = SendReport::success($this->getTarget($message), $json, $message);
+            },
+            'rejected' => function (Throwable $reason, int $index) use ($messages, &$sendReports): void {
+                $message = $messages[$index];
+
+                $error = $this->exceptionConverter->convertException($reason);
+
+                $sendReports[$index] = SendReport::failure($this->getTarget($message), $error, $message);
+            },
+        ];
+
+        $this->messagingApi->pool($requests(), $config)->wait();
+
+        // $sendReports has the same size as $messages, and each key is set by the `fulfilled` and `rejected`
+        // handlers above. The only way I could imagine a `null` value in the reports is when a request
+        // didn't return a response at all. I don't think it's possible, so letting PHPStan know.
+        assert(!in_array(null, $sendReports, true));
+
+        return MulticastSendReport::withItems($sendReports);
     }
 
     public function validate($message): array
@@ -98,9 +120,9 @@ class Messaging implements Contract\Messaging
 
     public function validateRegistrationTokens($registrationTokenOrTokens): array
     {
-        $registrationTokenOrTokens = $this->ensureNonEmptyRegistrationTokens($registrationTokenOrTokens);
+        $tokens = RegistrationTokens::fromValue($registrationTokenOrTokens);
 
-        $report = $this->sendMulticast(CloudMessage::new(), $registrationTokenOrTokens, true);
+        $report = $this->sendMulticast(new RawMessageFromArray([]), $tokens, true);
 
         return [
             'valid' => $report->validTokens(),
@@ -109,7 +131,7 @@ class Messaging implements Contract\Messaging
         ];
     }
 
-    public function subscribeToTopic($topic, $registrationTokenOrTokens): array
+    public function subscribeToTopic(string|Topic $topic, RegistrationTokens|RegistrationToken|array|string $registrationTokenOrTokens): array
     {
         return $this->subscribeToTopics([$topic], $registrationTokenOrTokens);
     }
@@ -122,46 +144,47 @@ class Messaging implements Contract\Messaging
             $topicObjects[] = $topic instanceof Topic ? $topic : Topic::fromValue($topic);
         }
 
-        $tokens = $this->ensureNonEmptyRegistrationTokens($registrationTokenOrTokens);
+        $tokens = RegistrationTokens::fromValue($registrationTokenOrTokens);
 
         return $this->appInstanceApi->subscribeToTopics($topicObjects, $tokens);
     }
 
-    public function unsubscribeFromTopic($topic, $registrationTokenOrTokens): array
+    public function unsubscribeFromTopic(string|Topic $topic, RegistrationTokens|RegistrationToken|array|string $registrationTokenOrTokens): array
     {
         return $this->unsubscribeFromTopics([$topic], $registrationTokenOrTokens);
     }
 
-    public function unsubscribeFromTopics(array $topics, $registrationTokenOrTokens): array
+    public function unsubscribeFromTopics(array $topics, RegistrationTokens|RegistrationToken|array|string $registrationTokenOrTokens): array
     {
-        $topics = \array_map(
-            static fn ($topic) => $topic instanceof Topic ? $topic : Topic::fromValue($topic),
-            $topics
+        $topics = array_map(
+            static fn($topic): Topic => $topic instanceof Topic ? $topic : Topic::fromValue($topic),
+            $topics,
         );
 
-        $tokens = $this->ensureNonEmptyRegistrationTokens($registrationTokenOrTokens);
+        $tokens = RegistrationTokens::fromValue($registrationTokenOrTokens);
 
         return $this->appInstanceApi->unsubscribeFromTopics($topics, $tokens);
     }
 
     public function unsubscribeFromAllTopics($registrationTokenOrTokens): array
     {
-        $tokens = $this->ensureNonEmptyRegistrationTokens($registrationTokenOrTokens);
+        $tokens = RegistrationTokens::fromValue($registrationTokenOrTokens);
 
         $promises = [];
 
         foreach ($tokens as $token) {
             $promises[$token->value()] = $this->appInstanceApi
                 ->getAppInstanceAsync($token)
-                ->then(function (AppInstance $appInstance) use ($token) {
+                ->then(function (AppInstance $appInstance) use ($token): array {
                     $topics = [];
+
                     foreach ($appInstance->topicSubscriptions() as $subscription) {
                         $topics[] = $subscription->topic()->value();
                     }
 
-                    return \array_keys($this->unsubscribeFromTopics($topics, $token));
+                    return array_keys($this->unsubscribeFromTopics($topics, $token));
                 })
-                ->otherwise(static fn (\Throwable $e) => $e->getMessage())
+                ->otherwise(static fn(Throwable $e): string => $e->getMessage())
             ;
         }
 
@@ -176,14 +199,14 @@ class Messaging implements Contract\Messaging
         return $result;
     }
 
-    public function getAppInstance($registrationToken): AppInstance
+    public function getAppInstance(RegistrationToken|string $registrationToken): AppInstance
     {
         $token = $registrationToken instanceof RegistrationToken
             ? $registrationToken
             : RegistrationToken::fromValue($registrationToken);
 
         try {
-            return $this->appInstanceApi->getAppInstanceAsync($token)->wait();
+            return $this->appInstanceApi->getAppInstance($token);
         } catch (NotFound $e) {
             throw NotFound::becauseTokenNotFound($token->value(), $e->errors());
         } catch (MessagingException $e) {
@@ -193,37 +216,92 @@ class Messaging implements Contract\Messaging
     }
 
     /**
-     * @param Message|array<string, mixed> $message
+     * @param iterable<Message|array<non-empty-string, mixed>> $messages
      *
-     * @throws InvalidArgumentException
+     * @return list<Message>
      */
-    private function makeMessage($message): Message
+    private function ensureMessages(iterable $messages): array
     {
-        if ($message instanceof Message) {
-            return $message;
+        $ensured = [];
+
+        foreach ($messages as $message) {
+            $ensured[] = $this->makeMessage($message);
         }
 
-        return CloudMessage::fromArray($message);
+        return $ensured;
     }
 
     /**
-     * @param RegistrationTokens|RegistrationToken|RegistrationToken[]|string[]|string $value
+     * @param Message|array<non-empty-string, mixed> $message
      *
-     * @throws InvalidArgument
+     * @throws InvalidArgumentException
      */
-    private function ensureNonEmptyRegistrationTokens($value): RegistrationTokens
+    private function makeMessage(Message|array $message): Message
     {
-        try {
-            $tokens = RegistrationTokens::fromValue($value);
-        } catch (InvalidArgumentException $e) {
-            // We have to wrap the exception for BC reasons
-            throw new InvalidArgument($e->getMessage());
+        $message = $message instanceof Message ? $message : new RawMessageFromArray($message);
+
+        $message = (new SetApnsPushTypeIfNeeded())($message);
+
+        return (new SetApnsContentAvailableIfNeeded())($message);
+    }
+
+    /**
+     * @param iterable<Message> $messages
+     * @return callable(): list<RequestInterface>
+     */
+    private function createSendRequests(iterable $messages, bool $validateOnly): callable
+    {
+        return function () use ($messages, $validateOnly) {
+            foreach ($messages as $message) {
+                yield $this->messagingApi->createSendRequestForMessage($message, $validateOnly);
+            }
+        };
+    }
+
+    private function messageHasTarget(Message $message): bool
+    {
+        $check = Json::decode(Json::encode($message), true);
+
+        return array_key_exists(MessageTarget::CONDITION, $check)
+            || array_key_exists(MessageTarget::TOKEN, $check)
+            || array_key_exists(MessageTarget::TOPIC, $check);
+    }
+
+    private function withChangedTarget(Message $message, string $target, string $value): Message
+    {
+        $message = Json::decode(Json::encode($message), true);
+
+        unset(
+            $message[MessageTarget::CONDITION],
+            $message[MessageTarget::TOKEN],
+            $message[MessageTarget::TOPIC],
+        );
+
+        $message[$target] = $value;
+
+        return new RawMessageFromArray($message);
+    }
+
+    private function getTarget(Message $message): MessageTarget
+    {
+        $message = Json::decode(Json::encode($message), true);
+
+        $condition = $message[MessageTarget::CONDITION] ?? null;
+        $token = $message[MessageTarget::TOKEN] ?? null;
+        $topic = $message[MessageTarget::TOPIC] ?? null;
+
+        if (is_string($condition) && $condition !== '') {
+            return MessageTarget::with(MessageTarget::CONDITION, $condition);
         }
 
-        if ($tokens->isEmpty()) {
-            throw new InvalidArgument('Empty list of registration tokens.');
+        if (is_string($token) && $token !== '') {
+            return MessageTarget::with(MessageTarget::TOKEN, $token);
         }
 
-        return $tokens;
+        if (is_string($topic) && $topic !== '') {
+            return MessageTarget::with(MessageTarget::TOPIC, $topic);
+        }
+
+        return MessageTarget::with(MessageTarget::UNKNOWN, 'unknown');
     }
 }

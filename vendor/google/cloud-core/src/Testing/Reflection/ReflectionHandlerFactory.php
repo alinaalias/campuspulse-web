@@ -17,6 +17,8 @@
 
 namespace Google\Cloud\Core\Testing\Reflection;
 
+use phpDocumentor\Reflection\Php\Factory\Argument;
+
 /**
  * Class for determining which verison of phpdocumentor/reflection is being used.
  * @internal
@@ -24,10 +26,10 @@ namespace Google\Cloud\Core\Testing\Reflection;
 class ReflectionHandlerFactory
 {
     /**
-     * @return ReflectionHandlerV5
+     * @return ReflectionHandlerV6
      */
     public static function create()
     {
-        return new ReflectionHandlerV5();
+        return new ReflectionHandlerV6();
     }
 }

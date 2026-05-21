@@ -4,31 +4,28 @@ declare(strict_types=1);
 
 namespace Kreait\Firebase\Auth;
 
-use Kreait\Firebase\Auth\ActionCodeSettings\ValidatedActionCodeSettings;
 use Kreait\Firebase\Value\Email;
+use Stringable;
 
+/**
+ * @internal
+ */
 final class CreateActionLink
 {
-    private string $type;
-    private Email $email;
-    private ActionCodeSettings $settings;
-    private ?string $tenantId = null;
-    private ?string $locale = null;
-
-    private function __construct(string $type, Email $email, ActionCodeSettings $settings)
-    {
-        $this->type = $type;
-        $this->email = $email;
-        $this->settings = $settings;
+    private function __construct(
+        private readonly ?string $tenantId,
+        private readonly ?string $locale,
+        private readonly string $type,
+        private readonly string $email,
+        private readonly ActionCodeSettings $settings,
+    ) {
     }
 
-    public static function new(string $type, Email $email, ActionCodeSettings $settings, ?string $tenantId = null, ?string $locale = null): self
+    public static function new(string $type, Stringable|string $email, ActionCodeSettings $settings, ?string $tenantId = null, ?string $locale = null): self
     {
-        $instance = new self($type, $email, $settings);
-        $instance->tenantId = $tenantId;
-        $instance->locale = $locale;
+        $email = Email::fromString((string) $email)->value;
 
-        return $instance;
+        return new self($tenantId, $locale, $type, $email, $settings);
     }
 
     public function type(): string
@@ -36,14 +33,14 @@ final class CreateActionLink
         return $this->type;
     }
 
-    public function email(): Email
+    public function email(): string
     {
         return $this->email;
     }
 
     public function settings(): ActionCodeSettings
     {
-        return $this->settings ?? ValidatedActionCodeSettings::empty();
+        return $this->settings;
     }
 
     public function tenantId(): ?string

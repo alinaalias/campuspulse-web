@@ -42,6 +42,11 @@ class StreamHandler
 
         $protocolVersion = $request->getProtocolVersion();
 
+        if ('' === $protocolVersion) {
+            $protocolVersion = '1.1';
+            $request = Psr7\Utils::modifyRequest($request, ['version' => $protocolVersion]);
+        }
+
         if ('1.0' !== $protocolVersion && '1.1' !== $protocolVersion) {
             throw new ConnectException(sprintf('HTTP/%s is not supported by the stream handler.', $protocolVersion), $request);
         }
@@ -192,7 +197,7 @@ class StreamHandler
                         if ($length === 0) {
                             unset($headers[$normalizedKeys['content-length']]);
                         } else {
-                            $headers[$normalizedKeys['content-length']] = [$length];
+                            $headers[$normalizedKeys['content-length']] = [(string) $length];
                         }
                     }
                 }
@@ -333,8 +338,15 @@ class StreamHandler
         );
 
         return $this->createResource(
-            function () use ($uri, &$http_response_header, $contextResource, $context, $options, $request) {
+            function () use ($uri, $contextResource, $context, $options, $request) {
                 $resource = @\fopen((string) $uri, 'r', false, $contextResource);
+
+                // See https://wiki.php.net/rfc/deprecations_php_8_5#deprecate_the_http_response_header_predefined_variable
+                if (function_exists('http_get_last_response_headers')) {
+                    /** @var array|null */
+                    $http_response_header = \http_get_last_response_headers();
+                }
+
                 $this->lastHeaders = $http_response_header ?? [];
 
                 if (false === $resource) {
@@ -538,8 +550,20 @@ class StreamHandler
     private function add_cert(RequestInterface $request, array &$options, $value, array &$params): void
     {
         if (\is_array($value)) {
-            $options['ssl']['passphrase'] = $value[1];
+            if (!isset($value[0]) || !\is_string($value[0])) {
+                throw new \InvalidArgumentException('Invalid cert request option');
+            }
+            if (isset($value[1])) {
+                if (!\is_string($value[1])) {
+                    throw new \InvalidArgumentException('Invalid cert request option');
+                }
+                $options['ssl']['passphrase'] = $value[1];
+            }
             $value = $value[0];
+        }
+
+        if (!\is_string($value)) {
+            throw new \InvalidArgumentException('Invalid cert request option');
         }
 
         if (!\file_exists($value)) {
@@ -554,6 +578,10 @@ class StreamHandler
      */
     private function add_progress(RequestInterface $request, array &$options, $value, array &$params): void
     {
+        if (!\is_callable($value)) {
+            throw new \InvalidArgumentException('progress client option must be callable');
+        }
+
         self::addNotification(
             $params,
             static function ($code, $a, $b, $c, $transferred, $total) use ($value) {

@@ -1,6 +1,5 @@
 # Ignore configuration and secret files
 .env
-vendor/
 config.php
 service-account.json
 

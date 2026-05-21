@@ -4,16 +4,43 @@ declare(strict_types=1);
 
 namespace Kreait\Firebase\RemoteConfig;
 
+use DateTimeImmutable;
 use DateTimeInterface;
 use Kreait\Firebase\Util\DT;
 
+/**
+ * @phpstan-type FindVersionsShape array{
+ *     startingAt?: non-empty-string,
+ *     startTime?: non-empty-string,
+ *     since?: non-empty-string,
+ *     endingAt?: non-empty-string,
+ *     endTime?: non-empty-string,
+ *     until?: non-empty-string,
+ *     lastVersionBeing?: VersionNumber|positive-int|non-empty-string,
+ *     endVersionNumber?: VersionNumber|positive-int|non-empty-string,
+ *     up_to_version?: VersionNumber|positive-int|non-empty-string,
+ *     pageSize?: positive-int|non-empty-string,
+ *     page_size?: positive-int|non-empty-string,
+ *     limit?: positive-int|non-empty-string
+ * }
+ */
 class FindVersions
 {
-    private ?\DateTimeImmutable $since = null;
-    private ?\DateTimeImmutable $until = null;
-    private ?VersionNumber $upToVersion = null;
+    private ?DateTimeImmutable $since = null;
+
+    private ?DateTimeImmutable $until = null;
+
+    /**
+     * @var positive-int|null
+     */
     private ?int $limit = null;
+
+    /**
+     * @var positive-int|null
+     */
     private ?int $pageSize = null;
+
+    private ?VersionNumber $upToVersion = null;
 
     private function __construct()
     {
@@ -25,31 +52,46 @@ class FindVersions
     }
 
     /**
-     * @param array<string, mixed> $params
+     * @param FindVersionsShape $params
      */
     public static function fromArray(array $params): self
     {
         $query = self::all();
 
-        if ($value = $params['startingAt'] ?? $params['startTime'] ?? $params['since'] ?? null) {
+        $value = $params['startingAt'] ?? $params['startTime'] ?? $params['since'] ?? null;
+        if ($value !== null) {
             $query = $query->startingAt(DT::toUTCDateTimeImmutable($value));
         }
 
-        if ($value = $params['endingAt'] ?? $params['endTime'] ?? $params['until'] ?? null) {
+        $value = $params['endingAt'] ?? $params['endTime'] ?? $params['until'] ?? null;
+        if ($value !== null) {
             $query = $query->endingAt(DT::toUTCDateTimeImmutable($value));
         }
 
-        if ($value = $params['lastVersionBeing'] ?? $params['endVersionNumber'] ?? $params['up_to_version'] ?? null) {
+        $value = $params['lastVersionBeing'] ?? $params['endVersionNumber'] ?? $params['up_to_version'] ?? null;
+        if ($value !== null) {
             $versionNumber = $value instanceof VersionNumber ? $value : VersionNumber::fromValue($value);
             $query = $query->upToVersion($versionNumber);
         }
 
-        if ($value = $params['pageSize'] ?? $params['page_size'] ?? null) {
-            $query = $query->withPageSize((int) $value);
+        $value = $params['pageSize'] ?? $params['page_size'] ?? null;
+        if ($value !== null) {
+            $value = (int) $value;
+
+            if ($value >= 1) {
+                // We can't throw an exception here, although we shouldn't because of backward compatibility
+                $query = $query->withPageSize($value);
+            }
         }
 
-        if ($value = $params['limit'] ?? null) {
-            $query = $query->withLimit((int) $value);
+        $value = $params['limit'] ?? null;
+        if ($value !== null) {
+            $value = (int) $value;
+
+            if ($value >= 1) {
+                // We can't throw an exception here, although we shouldn't because of backward compatibility
+                $query = $query->withLimit($value);
+            }
         }
 
         return $query;
@@ -63,7 +105,7 @@ class FindVersions
         return $query;
     }
 
-    public function since(): ?\DateTimeImmutable
+    public function since(): ?DateTimeImmutable
     {
         return $this->since;
     }
@@ -76,7 +118,7 @@ class FindVersions
         return $query;
     }
 
-    public function until(): ?\DateTimeImmutable
+    public function until(): ?DateTimeImmutable
     {
         return $this->until;
     }
@@ -94,6 +136,9 @@ class FindVersions
         return $this->upToVersion;
     }
 
+    /**
+     * @param positive-int $pageSize
+     */
     public function withPageSize(int $pageSize): self
     {
         $query = clone $this;
@@ -102,11 +147,17 @@ class FindVersions
         return $query;
     }
 
+    /**
+     * @return positive-int|null $pageSize
+     */
     public function pageSize(): ?int
     {
         return $this->pageSize;
     }
 
+    /**
+     * @param positive-int $limit
+     */
     public function withLimit(int $limit): self
     {
         $query = clone $this;
@@ -115,6 +166,9 @@ class FindVersions
         return $query;
     }
 
+    /**
+     * @return positive-int|null
+     */
     public function limit(): ?int
     {
         return $this->limit;

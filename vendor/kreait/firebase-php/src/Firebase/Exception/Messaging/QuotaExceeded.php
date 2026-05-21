@@ -7,7 +7,7 @@ namespace Kreait\Firebase\Exception\Messaging;
 use DateTimeImmutable;
 use Kreait\Firebase\Exception\HasErrors;
 use Kreait\Firebase\Exception\MessagingException;
-use RuntimeException;
+use Kreait\Firebase\Exception\RuntimeException;
 
 final class QuotaExceeded extends RuntimeException implements MessagingException
 {
@@ -18,7 +18,7 @@ final class QuotaExceeded extends RuntimeException implements MessagingException
     /**
      * @internal
      *
-     * @param string[] $errors
+     * @param array<mixed> $errors
      */
     public function withErrors(array $errors): self
     {

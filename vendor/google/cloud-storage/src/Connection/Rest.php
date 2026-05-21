@@ -22,13 +22,11 @@ use Google\Cloud\Core\RequestBuilder;
 use Google\Cloud\Core\RequestWrapper;
 use Google\Cloud\Core\RestTrait;
 use Google\Cloud\Core\Retry;
-use Google\Cloud\Storage\Connection\RetryTrait;
 use Google\Cloud\Core\Upload\AbstractUploader;
 use Google\Cloud\Core\Upload\MultipartUploader;
 use Google\Cloud\Core\Upload\ResumableUploader;
 use Google\Cloud\Core\Upload\StreamableUploader;
 use Google\Cloud\Core\UriTrait;
-use Google\Cloud\Storage\Connection\ConnectionInterface;
 use Google\Cloud\Storage\StorageClient;
 use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\MimeType;
@@ -103,6 +101,26 @@ class Rest implements ConnectionInterface
     private $restRetryFunction;
 
     /**
+     * @var string|null
+     */
+    private ?string $retryStrategy;
+
+    /**
+     * @var callable|null
+     */
+    private $restDelayFunction;
+
+    /**
+     * @var callable|null
+     */
+    private $restCalcDelayFunction;
+
+    /**
+     * @var callable|null
+     */
+    private $restRetryListener;
+
+    /**
      * @param array $config
      */
     public function __construct(array $config = [])
@@ -130,6 +148,10 @@ class Rest implements ConnectionInterface
 
         $this->projectId = $this->pluck('projectId', $config, false);
         $this->restRetryFunction = (isset($config['restRetryFunction'])) ? $config['restRetryFunction'] : null;
+        $this->retryStrategy = $config['retryStrategy'] ?? null;
+        $this->restDelayFunction = $config['restDelayFunction'] ?? null;
+        $this->restCalcDelayFunction = $config['restCalcDelayFunction'] ?? null;
+        $this->restRetryListener = $config['restRetryListener'] ?? null;
     }
 
     /**
@@ -186,6 +208,14 @@ class Rest implements ConnectionInterface
     public function deleteBucket(array $args = [])
     {
         return $this->send('buckets', 'delete', $args);
+    }
+
+    /**
+     * @param array $args
+     */
+    public function restoreBucket(array $args = [])
+    {
+        return $this->send('buckets', 'restore', $args);
     }
 
     /**
@@ -255,6 +285,14 @@ class Rest implements ConnectionInterface
     /**
      * @param array $args
      */
+    public function moveObject(array $args = [])
+    {
+        return $this->send('objects', 'move', $args);
+    }
+
+    /**
+     * @param array $args
+     */
     public function composeObject(array $args = [])
     {
         return $this->send('objects', 'compose', $args);
@@ -294,11 +332,13 @@ class Rest implements ConnectionInterface
         $resultStream = Utils::streamFor(null);
         $transcodedObj = false;
 
+        $args['retryStrategy'] ??= $this->retryStrategy;
+
         list($request, $requestOptions) = $this->buildDownloadObjectParams($args);
 
         $invocationId = Uuid::uuid4()->toString();
         $requestOptions['retryHeaders'] = self::getRetryHeaders($invocationId, 1);
-        $requestOptions['restRetryFunction'] = $this->getRestRetryFunction('objects', 'get', $requestOptions);
+        $requestOptions['restRetryFunction'] = $this->getRestRetryFunction('objects', 'get', $args);
         // We try to deduce if the object is a transcoded object when we receive the headers.
         $requestOptions['restOptions']['on_headers'] = function ($response) use (&$transcodedObj) {
             $header = $response->getHeader(self::TRANSCODED_OBJ_HEADER_KEY);
@@ -318,7 +358,11 @@ class Rest implements ConnectionInterface
             &$attempt,
         ) {
             // if the exception has a response for us to use
-            if ($e instanceof RequestException && $e->hasResponse()) {
+            if ($e instanceof RequestException
+                && $e->hasResponse()
+                && $e->getResponse()->getStatusCode() >= 200
+                && $e->getResponse()->getStatusCode() < 300
+            ) {
                 $msg = (string) $e->getResponse()->getBody();
 
                 $fetchedStream = Utils::streamFor($msg);
@@ -443,6 +487,8 @@ class Rest implements ConnectionInterface
             'userProject' => null,
         ];
 
+        $args['retryStrategy'] ??= $this->retryStrategy;
+
         $args['data'] = Utils::streamFor($args['data']);
 
         if ($args['resumable'] === null) {
@@ -454,10 +500,23 @@ class Rest implements ConnectionInterface
         }
 
         $validate = $this->chooseValidationMethod($args);
-        if ($validate === 'md5') {
-            $args['metadata']['md5Hash'] = base64_encode(Utils::hash($args['data'], 'md5', true));
-        } elseif ($validate === 'crc32') {
-            $args['metadata']['crc32c'] = $this->crcFromStream($args['data']);
+        $xGoogHashHeader = '';
+        if ($validate !== false) {
+            $md5Hash = base64_encode(Utils::hash($args['data'], 'md5', true));
+            $crc32c = $this->crcFromStream($args['data']);
+
+            // Add validation metadata
+            if ($validate === 'md5') {
+                $args['metadata']['md5Hash'] = $md5Hash;
+            } elseif ($validate === 'crc32') {
+                $args['metadata']['crc32c'] = $crc32c;
+            }
+
+            // Prepare the X-Goog-Hash header string
+            $xGoogHashHeader = implode(',', array_filter([
+                $md5Hash ? 'md5=' . $md5Hash : null,
+                $crc32c ? 'crc32c=' . $crc32c : null,
+            ]));
         }
 
         $args['metadata']['name'] = $args['name'];
@@ -486,6 +545,19 @@ class Rest implements ConnectionInterface
         $args['uploaderOptions'] = array_intersect_key($args, array_flip($uploaderOptionKeys));
         $args = array_diff_key($args, array_flip($uploaderOptionKeys));
 
+        // Add the X-Goog-Hash header only if there are hashes to include
+        if (!empty($xGoogHashHeader)) {
+            $args['uploaderOptions']['restOptions']['headers']['X-Goog-Hash'] = $xGoogHashHeader;
+        }
+
+        if (!empty($args['headers'])) {
+            $args['uploaderOptions']['restOptions']['headers'] = array_merge(
+                $args['uploaderOptions']['restOptions']['headers'] ?? [],
+                $args['headers']
+            );
+        }
+        unset($args['headers']);
+
         // Passing on custom retry function to $args['uploaderOptions']
         $retryFunc = $this->getRestRetryFunction(
             'objects',
@@ -502,7 +574,7 @@ class Rest implements ConnectionInterface
     }
 
     /**
-     * @param  array $args
+     * @param array $args
      */
     public function getBucketIamPolicy(array $args)
     {
@@ -510,7 +582,7 @@ class Rest implements ConnectionInterface
     }
 
     /**
-     * @param  array $args
+     * @param array $args
      */
     public function setBucketIamPolicy(array $args)
     {
@@ -518,7 +590,7 @@ class Rest implements ConnectionInterface
     }
 
     /**
-     * @param  array $args
+     * @param array $args
      */
     public function testBucketIamPermissions(array $args)
     {
@@ -659,7 +731,7 @@ class Rest implements ConnectionInterface
     }
 
     /**
-     * Choose a upload validation method based on user input and platform
+     * Choose an upload validation method based on user input and platform
      * requirements.
      *
      * @param array $args
@@ -668,7 +740,10 @@ class Rest implements ConnectionInterface
     private function chooseValidationMethod(array $args)
     {
         // If the user provided a hash, skip hashing.
-        if (isset($args['metadata']['md5Hash']) || isset($args['metadata']['crc32c'])) {
+        if (isset($args['metadata']['md5Hash'])
+            || isset($args['metadata']['crc32c'])
+            || isset($args['headers']['X-Goog-Hash'])
+        ) {
             return false;
         }
 
@@ -730,8 +805,8 @@ class Rest implements ConnectionInterface
     /**
      * Check if hash() supports crc32c.
      *
-     * @deprecated
      * @return bool
+     * @deprecated
      */
     protected function supportsBuiltinCrc32c()
     {
@@ -756,11 +831,19 @@ class Rest implements ConnectionInterface
             'objectAccessControls' => 'object_acl'
         ];
         $retryResource = isset($retryMap[$resource]) ? $retryMap[$resource] : $resource;
+
         $options['restRetryFunction'] = $this->restRetryFunction ?? $this->getRestRetryFunction(
             $retryResource,
             $method,
             $options
         );
+
+        $options += array_filter([
+            'retryStrategy' => $this->retryStrategy,
+            'restDelayFunction' => $this->restDelayFunction,
+            'restCalcDelayFunction' => $this->restCalcDelayFunction,
+            'restRetryListener' => $this->restRetryListener,
+        ]);
 
         $options = $this->addRetryHeaderLogic($options);
 
@@ -778,19 +861,26 @@ class Rest implements ConnectionInterface
         $invocationId = Uuid::uuid4()->toString();
         $args['retryHeaders'] = self::getRetryHeaders($invocationId, 1);
 
+        $userListener = $args['restRetryListener'] ?? null;
+
         // Adding callback logic to update headers while retrying
         $args['restRetryListener'] = function (
             \Exception $e,
             $retryAttempt,
             &$arguments
         ) use (
-            $invocationId
+            $invocationId,
+            $userListener
         ) {
             $arguments[0] = $this->modifyRequestForRetry(
                 $arguments[0],
                 $retryAttempt,
                 $invocationId
             );
+
+            if ($userListener) {
+                $userListener($e, $retryAttempt, $arguments);
+            }
         };
 
         return $args;

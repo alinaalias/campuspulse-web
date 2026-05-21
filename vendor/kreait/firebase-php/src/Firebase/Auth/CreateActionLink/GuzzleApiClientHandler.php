@@ -4,28 +4,42 @@ declare(strict_types=1);
 
 namespace Kreait\Firebase\Auth\CreateActionLink;
 
+use Beste\Json;
 use GuzzleHttp\ClientInterface;
-use GuzzleHttp\Exception\GuzzleException;
+use GuzzleHttp\Psr7\Request;
+use GuzzleHttp\Psr7\Utils;
 use InvalidArgumentException;
 use Kreait\Firebase\Auth\CreateActionLink;
-use Kreait\Firebase\Util\JSON;
+use Kreait\Firebase\Auth\ProjectAwareAuthResourceUrlBuilder;
+use Kreait\Firebase\Auth\TenantAwareAuthResourceUrlBuilder;
+use Psr\Http\Client\ClientExceptionInterface;
+use Psr\Http\Message\RequestInterface;
 
-final class GuzzleApiClientHandler implements Handler
+use function array_filter;
+
+use const JSON_FORCE_OBJECT;
+
+/**
+ * @internal
+ */
+final class GuzzleApiClientHandler
 {
-    private ClientInterface $client;
-
-    public function __construct(ClientInterface $client)
-    {
-        $this->client = $client;
+    /**
+     * @param non-empty-string $projectId
+     */
+    public function __construct(
+        private readonly ClientInterface $client,
+        private readonly string $projectId,
+    ) {
     }
 
     public function handle(CreateActionLink $action): string
     {
-        $request = new ApiRequest($action);
+        $request = $this->createRequest($action);
 
         try {
             $response = $this->client->send($request, ['http_errors' => false]);
-        } catch (GuzzleException $e) {
+        } catch (ClientExceptionInterface $e) {
             throw new FailedToCreateActionLink('Failed to create action link: '.$e->getMessage(), $e->getCode(), $e);
         }
 
@@ -34,15 +48,46 @@ final class GuzzleApiClientHandler implements Handler
         }
 
         try {
-            $data = JSON::decode((string) $response->getBody(), true);
+            $data = Json::decode((string) $response->getBody(), true);
         } catch (InvalidArgumentException $e) {
             throw new FailedToCreateActionLink('Unable to parse the response data: '.$e->getMessage(), $e->getCode(), $e);
         }
 
-        if (!($actionCode = $data['oobLink'] ?? null)) {
+        $actionCode = $data['oobLink'] ?? null;
+
+        if (!is_scalar($actionCode)) {
             throw new FailedToCreateActionLink('The response did not contain an action link');
         }
 
         return (string) $actionCode;
+    }
+
+    private function createRequest(CreateActionLink $action): RequestInterface
+    {
+        $data = [
+            'requestType' => $action->type(),
+            'email' => $action->email(),
+            'returnOobLink' => true,
+            ...$action->settings()->toArray(),
+        ];
+
+        $tenantId = $action->tenantId();
+        if (is_string($tenantId) && $tenantId !== '') {
+            $urlBuilder = TenantAwareAuthResourceUrlBuilder::forProjectAndTenant($this->projectId, $tenantId);
+        } else {
+            $urlBuilder = ProjectAwareAuthResourceUrlBuilder::forProject($this->projectId);
+        }
+
+        $url = $urlBuilder->getUrl('/accounts:sendOobCode');
+
+        $body = Utils::streamFor(Json::encode($data, JSON_FORCE_OBJECT));
+
+        $headers = array_filter([
+            'Content-Type' => 'application/json; charset=UTF-8',
+            'Content-Length' => (string) $body->getSize(),
+            'X-Firebase-Locale' => $action->locale(),
+        ], fn(?string $value): bool => $value !== null);
+
+        return new Request('POST', $url, $headers, $body);
     }
 }

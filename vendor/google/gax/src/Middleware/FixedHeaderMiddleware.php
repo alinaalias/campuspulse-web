@@ -33,10 +33,11 @@
 namespace Google\ApiCore\Middleware;
 
 use Google\ApiCore\Call;
-use GuzzleHttp\Promise\PromiseInterface;
 
 /**
  * Middleware to add fixed headers to an API call.
+ *
+ * @internal
  */
 class FixedHeaderMiddleware implements MiddlewareInterface
 {

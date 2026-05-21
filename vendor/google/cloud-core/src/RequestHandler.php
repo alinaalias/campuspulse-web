@@ -17,15 +17,12 @@
 
 namespace Google\Cloud\Core;
 
-use Google\ApiCore\Serializer;
-use Google\Cloud\Core\ArrayTrait;
-use Google\Cloud\Core\Exception\NotFoundException;
-use Google\Cloud\Core\Exception\ServiceException;
-use Google\Cloud\Core\TimeTrait;
-use Google\Cloud\Core\WhitelistTrait;
 use \Google\Protobuf\Internal\Message;
 use Google\ApiCore\ApiException;
 use Google\ApiCore\OperationResponse;
+use Google\ApiCore\Serializer;
+use Google\Cloud\Core\Exception\NotFoundException;
+use Google\Cloud\Core\Exception\ServiceException;
 
 /**
  * @internal
@@ -45,16 +42,16 @@ class RequestHandler
      */
     private Serializer $serializer;
 
-    private array $clients;
+    private array $clients = [];
 
     /**
      * @param Serializer $serializer
-     * @param array $clientClasses
+     * @param array<string|object> $clients
      * @param array $clientConfig
      */
     public function __construct(
         Serializer $serializer,
-        array $clientClasses,
+        array $clients,
         array $clientConfig = []
     ) {
         //@codeCoverageIgnoreStart
@@ -76,11 +73,14 @@ class RequestHandler
             );
         }
         //@codeCoverageIgnoreEnd
-        
+
         // Initialize the client classes and store them in memory
-        $this->clients = [];
-        foreach ($clientClasses as $className) {
-            $this->clients[$className] = new $className($clientConfig);
+        foreach ($clients as $client) {
+            if (is_object($client)) {
+                $this->clients[get_class($client)] = $client;
+            } else {
+                $this->clients[$client] = new $client($clientConfig);
+            }
         }
     }
 

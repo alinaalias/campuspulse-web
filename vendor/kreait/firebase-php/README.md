@@ -1,22 +1,30 @@
-# Firebase Admin PHP SDK
+<div align="center">
+
+# Firebase for PHP
+
+<img src="docs/_static/logo.svg" alt="Firebase Admin PHP SDK Logo" width="120">
+
+<p><em>Firebase Admin SDK for PHP</em></p>
 
 [![Current version](https://img.shields.io/packagist/v/kreait/firebase-php.svg?logo=composer)](https://packagist.org/packages/kreait/firebase-php)
-[![Supported PHP version](https://img.shields.io/static/v1?logo=php&label=PHP&message=%5E7.4|%5E8.0&color=777bb4)](https://packagist.org/packages/kreait/firebase-php)
 [![Monthly Downloads](https://img.shields.io/packagist/dm/kreait/firebase-php.svg)](https://packagist.org/packages/kreait/firebase-php/stats)
-[![Total Downloads](https://img.shields.io/packagist/dt/kreait/firebase-php.svg)](https://packagist.org/packages/kreait/firebase-php/stats)
-[![Tests](https://github.com/kreait/firebase-php/workflows/Tests/badge.svg)](https://github.com/kreait/firebase-php/actions)
-[![Integration Tests](https://github.com/kreait/firebase-php/workflows/Integration%20Tests/badge.svg)](https://github.com/kreait/firebase-php/actions)
-[![codecov](https://codecov.io/gh/kreait/firebase-php/branch/main/graph/badge.svg)](https://codecov.io/gh/kreait/firebase-php)
-[![Discord](https://img.shields.io/discord/807679292573220925.svg?color=7289da&logo=discord)](https://discord.gg/Yacm7unBsr)
+[![Total Downloads](https://img.shields.io/packagist/dt/kreait/firebase-php.svg)](https://packagist.org/packages/kreait/firebase-php/stats)<br/>
+[![Tests](https://github.com/kreait/firebase-php/actions/workflows/tests.yml/badge.svg)](https://github.com/kreait/firebase-php/actions/workflows/tests.yml)
+[![Integration Tests](https://github.com/kreait/firebase-php/actions/workflows/integration-tests.yml/badge.svg)](https://github.com/kreait/firebase-php/actions/workflows/integration-tests.yml)
+[![Emulator Tests](https://github.com/kreait/firebase-php/actions/workflows/emulator-tests.yml/badge.svg)](https://github.com/kreait/firebase-php/actions/workflows/emulator-tests.yml)
 [![Sponsor](https://img.shields.io/static/v1?logo=GitHub&label=Sponsor&message=%E2%9D%A4&color=ff69b4)](https://github.com/sponsors/jeromegamez)
 
-## Table of Contents
+</div>
 
-- [Overview](#overview)
-- [Installation](#installation)
-- [Documentation](#documentation)
-- [Support](#support)
-- [License](#license)
+> [!IMPORTANT]
+> **Support the project:** This SDK is downloaded 1M+ times monthly and powers thousands of applications.
+> If it saves you or your team time, please consider
+> [sponsoring its development](https://github.com/sponsors/jeromegamez).
+
+> [!NOTE]
+> If you are interested in using the PHP Admin SDK as a client for end-user access (for example, in a web application),
+> as opposed to admin access from a privileged environment (like a server), you should instead follow the
+> [instructions for setting up the client JavaScript SDK](https://firebase.google.com/docs/web/setup).
 
 ## Overview
 
@@ -26,33 +34,43 @@ For more information, visit the [Firebase Admin PHP SDK documentation](https://f
 
 ## Installation
 
-The Firebase Admin PHP SDK is available on Packagist as [`kreait/firebase-php`](https://packagist.org/packages/kreait/firebase-php):
+The recommended way to install the Firebase Admin SDK is with [Composer](https://getcomposer.org).
+Composer is a dependency management tool for PHP that allows you to declare the dependencies
+your project needs and installs them into your project.
 
 ```bash
-composer require kreait/firebase-php
+composer require "kreait/firebase-php:^7.0"
 ```
 
-Integrations for Laravel, Lumen and Symfony are available:
+Please continue to the [Setup section](docs/setup.rst) to learn more about connecting your application to Firebase.
 
-- [kreait/laravel-firebase](https://packagist.org/packages/kreait/laravel-firebase)
-- [kreait/firebase-bundle](https://packagist.org/packages/kreait/firebase-bundle)
+If you want to use the SDK within a Framework, please follow the installation instructions here:
 
-## Documentation
+- **Laravel**: https://github.com/kreait/laravel-firebase
+- **Symfony**: https://github.com/kreait/firebase-bundle
 
-- [Authentication Guide](https://firebase-php.readthedocs.io/en/stable/authentication.html)
-- [Cloud Messaging Guide](https://firebase-php.readthedocs.io/en/stable/cloud-messaging.html)
-- [Cloud Storage Guide](https://firebase-php.readthedocs.io/en/stable/cloud-storage.html)
-- [Dynamic Links Guide](https://firebase-php.readthedocs.io/en/stable/dynamic-links.html)
-- [Firestore Guide](https://firebase-php.readthedocs.io/en/stable/cloud-firestore.html)
-- [Realtime Database Guide](https://firebase-php.readthedocs.io/en/stable/realtime-database.html)
-- [Remote Config Guide](https://firebase-php.readthedocs.io/en/stable/remote-config.html)
+## Quickstart
 
-## Support
+```php
+use Kreait\Firebase\Factory;
 
-- [Issue Tracker](https://github.com/kreait/firebase-php/issues/)
-- [Feature Requests and Discussions](https://github.com/kreait/firebase-php/discussions)
-- [Discord Community](https://discord.gg/Yacm7unBsr)
-- [Stack Overflow](https://stackoverflow.com/questions/tagged/firebase+php)
+$factory = (new Factory)
+    ->withServiceAccount('/path/to/firebase_credentials.json')
+    ->withDatabaseUri('https://my-project-default-rtdb.firebaseio.com');
+
+$auth = $factory->createAuth();
+$realtimeDatabase = $factory->createDatabase();
+$cloudMessaging = $factory->createMessaging();
+$remoteConfig = $factory->createRemoteConfig();
+$cloudStorage = $factory->createStorage();
+$firestore = $factory->createFirestore();
+```
+
+## Powered by
+
+[![JetBrains logo.](https://resources.jetbrains.com/storage/products/company/brand/logos/jetbrains.svg)](https://jb.gg/OpenSourceSupport)
+
+Thanks to [JetBrains](https://www.jetbrains.com/) credits for providing [a free PhpStorm license](https://jb.gg/OpenSourceSupport) for the development of this open-source package.
 
 ## License
 

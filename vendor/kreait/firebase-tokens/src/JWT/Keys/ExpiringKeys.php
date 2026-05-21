@@ -10,6 +10,9 @@ use Kreait\Firebase\JWT\Contract\ExpirableTrait;
 use Kreait\Firebase\JWT\Contract\Keys;
 use Kreait\Firebase\JWT\Contract\KeysTrait;
 
+/**
+ * @internal
+ */
 final class ExpiringKeys implements Expirable, Keys
 {
     use KeysTrait;
@@ -21,7 +24,7 @@ final class ExpiringKeys implements Expirable, Keys
     }
 
     /**
-     * @param array<string, mixed> $values
+     * @param array<non-empty-string, non-empty-string> $values
      */
     public static function withValuesAndExpirationTime(array $values, DateTimeImmutable $expirationTime): self
     {

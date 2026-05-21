@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Kreait\Firebase\Exception;
 
+use Beste\Clock\SystemClock;
+use DateInterval;
 use DateTimeImmutable;
-use GuzzleHttp\Exception\ConnectException;
+use Fig\Http\Message\StatusCodeInterface as StatusCode;
 use GuzzleHttp\Exception\RequestException;
-use Kreait\Clock;
-use Kreait\Clock\SystemClock;
 use Kreait\Firebase\Exception\Messaging\ApiConnectionFailed;
 use Kreait\Firebase\Exception\Messaging\AuthenticationError;
 use Kreait\Firebase\Exception\Messaging\InvalidMessage;
@@ -18,38 +18,35 @@ use Kreait\Firebase\Exception\Messaging\QuotaExceeded;
 use Kreait\Firebase\Exception\Messaging\ServerError;
 use Kreait\Firebase\Exception\Messaging\ServerUnavailable;
 use Kreait\Firebase\Http\ErrorResponseParser;
+use Psr\Clock\ClockInterface;
+use Psr\Http\Client\NetworkExceptionInterface;
 use Psr\Http\Message\ResponseInterface;
 use Throwable;
+
+use function is_numeric;
 
 /**
  * @internal
  */
 class MessagingApiExceptionConverter
 {
-    private ErrorResponseParser $responseParser;
+    private readonly ErrorResponseParser $responseParser;
 
-    private Clock $clock;
+    private readonly ClockInterface $clock;
 
-    /**
-     * @internal
-     */
-    public function __construct(?Clock $clock = null)
+    public function __construct(?ClockInterface $clock = null)
     {
         $this->responseParser = new ErrorResponseParser();
-        $this->clock = $clock ?? new SystemClock();
+        $this->clock = $clock ?? SystemClock::create();
     }
 
-    /**
-     * @return MessagingException
-     */
-    public function convertException(Throwable $exception): FirebaseException
+    public function convertException(Throwable $exception): MessagingException
     {
-        // @phpstan-ignore-next-line
-        if ($exception instanceof RequestException && !($exception instanceof ConnectException)) {
+        if ($exception instanceof RequestException) {
             return $this->convertGuzzleRequestException($exception);
         }
 
-        if ($exception instanceof ConnectException) {
+        if ($exception instanceof NetworkExceptionInterface) {
             return new ApiConnectionFailed('Unable to connect to the API: '.$exception->getMessage(), $exception->getCode(), $exception);
         }
 
@@ -60,7 +57,7 @@ class MessagingApiExceptionConverter
     {
         $code = $response->getStatusCode();
 
-        if ($code < 400) {
+        if ($code < StatusCode::STATUS_BAD_REQUEST) {
             throw new InvalidArgumentException('Cannot convert a non-failed response to an exception');
         }
 
@@ -68,21 +65,24 @@ class MessagingApiExceptionConverter
         $message = $this->responseParser->getErrorReasonFromResponse($response);
 
         switch ($code) {
-            case 400:
-                $convertedError = new InvalidMessage($message);
+            case StatusCode::STATUS_BAD_REQUEST:
+                $convertedError = new InvalidMessage($message, previous: $previous);
 
                 break;
-            case 401:
-            case 403:
-                $convertedError = new AuthenticationError($message);
+
+            case StatusCode::STATUS_UNAUTHORIZED:
+            case StatusCode::STATUS_FORBIDDEN:
+                $convertedError = new AuthenticationError($message, previous: $previous);
 
                 break;
-            case 404:
-                $convertedError = new NotFound($message);
+
+            case StatusCode::STATUS_NOT_FOUND:
+                $convertedError = new NotFound($message, previous: $previous);
 
                 break;
-            case 429:
-                $convertedError = new QuotaExceeded($message);
+
+            case StatusCode::STATUS_TOO_MANY_REQUESTS:
+                $convertedError = new QuotaExceeded($message, previous: $previous);
                 $retryAfter = $this->getRetryAfter($response);
 
                 if ($retryAfter !== null) {
@@ -90,12 +90,33 @@ class MessagingApiExceptionConverter
                 }
 
                 break;
-            case 500:
-                $convertedError = new ServerError($message);
+
+            case StatusCode::STATUS_INTERNAL_SERVER_ERROR:
+                $convertedError = new ServerError($message, previous: $previous);
 
                 break;
-            case 503:
-                $convertedError = new ServerUnavailable($message);
+
+            case StatusCode::STATUS_BAD_GATEWAY:
+                $contentType = mb_strtolower($response->getHeaderLine('Content-Type'));
+                $retryAfter = $this->getRetryAfter($response);
+
+                if (!str_contains($contentType, 'json')) {
+                    // Adding 30 seconds as a fallback retry after because the HTML Response suggests it
+                    // See https://github.com/kreait/firebase-php/issues/988
+                    $retryAfter ??= ($this->clock->now()->add(new DateInterval('PT30S')));
+                    $message = 'The server encountered a temporary error and could not complete your request.';
+                }
+
+                $convertedError = new ServerUnavailable($message, previous: $previous);
+
+                if ($retryAfter !== null) {
+                    $convertedError = $convertedError->withRetryAfter($retryAfter);
+                }
+
+                break;
+
+            case StatusCode::STATUS_SERVICE_UNAVAILABLE:
+                $convertedError = new ServerUnavailable($message, previous: $previous);
                 $retryAfter = $this->getRetryAfter($response);
 
                 if ($retryAfter !== null) {
@@ -103,6 +124,7 @@ class MessagingApiExceptionConverter
                 }
 
                 break;
+
             default:
                 $convertedError = new MessagingError($message, $code, $previous);
 
@@ -125,19 +147,19 @@ class MessagingApiExceptionConverter
 
     private function getRetryAfter(ResponseInterface $response): ?DateTimeImmutable
     {
-        $retryAfter = $response->getHeader('Retry-After')[0] ?? null;
+        $retryAfter = $response->getHeaderLine('Retry-After');
 
-        if (!$retryAfter) {
+        if ($retryAfter === '') {
             return null;
         }
 
-        if (\is_numeric($retryAfter)) {
+        if (is_numeric($retryAfter)) {
             return $this->clock->now()->modify("+{$retryAfter} seconds");
         }
 
         try {
             return new DateTimeImmutable($retryAfter);
-        } catch (Throwable $e) {
+        } catch (Throwable) {
             // We can't afford to throw exceptions in an exception handler :)
             // Here, if the Retry-After header doesn't have a numeric value
             // or a date that can be handled by DateTimeImmutable, we just

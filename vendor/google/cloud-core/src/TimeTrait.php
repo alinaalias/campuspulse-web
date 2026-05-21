@@ -38,7 +38,7 @@ trait TimeTrait
         $subSeconds = $matches[1] ?? '0';
 
         if (strlen($subSeconds) > 6) {
-            $timestamp = str_replace('.'. $subSeconds, '.' . substr($subSeconds, 0, 6), $timestamp);
+            $timestamp = str_replace('.' . $subSeconds, '.' . substr($subSeconds, 0, 6), $timestamp);
         }
 
         $dt = new \DateTimeImmutable($timestamp);
@@ -73,15 +73,18 @@ trait TimeTrait
      */
     private function formatTimeAsString(\DateTimeInterface $dateTime, $ns)
     {
+        if (!$dateTime instanceof \DateTimeImmutable) {
+            $dateTime = clone $dateTime;
+        }
         $dateTime = $dateTime->setTimeZone(new \DateTimeZone('UTC'));
         if ($ns === null) {
             return $dateTime->format(Timestamp::FORMAT);
-        } else {
-            return sprintf(
-                $dateTime->format(Timestamp::FORMAT_INTERPOLATE),
-                $this->convertNanoSecondsToFraction($ns)
-            );
         }
+
+        return sprintf(
+            $dateTime->format(Timestamp::FORMAT_INTERPOLATE),
+            $this->convertNanoSecondsToFraction($ns)
+        );
     }
 
     /**
@@ -92,10 +95,10 @@ trait TimeTrait
      *        $dateTime will be used instead.
      * @return array
      */
-    private function formatTimeAsArray(\DateTimeInterface $dateTime, $ns)
+    private function formatTimeAsArray(\DateTimeInterface $dateTime, $ns = null)
     {
         if ($ns === null) {
-            $ns = $dateTime->format('u');
+            $ns = $this->convertFractionToNanoSeconds($dateTime->format('u'));
         }
         return [
             'seconds' => (int) $dateTime->format('U'),

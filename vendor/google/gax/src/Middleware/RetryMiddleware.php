@@ -39,6 +39,8 @@ use GuzzleHttp\Promise\PromiseInterface;
 
 /**
  * Middleware that adds retry functionality.
+ *
+ * @internal
  */
 class RetryMiddleware implements MiddlewareInterface
 {
@@ -82,6 +84,11 @@ class RetryMiddleware implements MiddlewareInterface
             } elseif ($this->retrySettings->getInitialRpcTimeoutMillis() > 0) {
                 $options['timeoutMillis'] = $this->retrySettings->getInitialRpcTimeoutMillis();
             }
+        }
+
+        // Setting the retry attempt for logging
+        if ($this->retryAttempts > 0) {
+            $options['retryAttempt'] = $this->retryAttempts;
         }
 
         // Call the handler immediately if retry settings are disabled.

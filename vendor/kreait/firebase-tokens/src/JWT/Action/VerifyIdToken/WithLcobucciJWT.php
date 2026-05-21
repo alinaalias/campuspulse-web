@@ -4,45 +4,65 @@ declare(strict_types=1);
 
 namespace Kreait\Firebase\JWT\Action\VerifyIdToken;
 
+use Beste\Clock\FrozenClock;
 use DateInterval;
 use DateTimeImmutable;
 use DateTimeInterface;
-use Kreait\Clock;
 use Kreait\Firebase\JWT\Action\VerifyIdToken;
 use Kreait\Firebase\JWT\Contract\Keys;
 use Kreait\Firebase\JWT\Contract\Token;
 use Kreait\Firebase\JWT\Error\IdTokenVerificationFailed;
-use Kreait\Firebase\JWT\Token as TokenInstance;
-use Lcobucci\Clock\FrozenClock;
-use Lcobucci\JWT\Configuration;
+use Kreait\Firebase\JWT\Error\SessionCookieVerificationFailed;
+use Kreait\Firebase\JWT\InsecureToken;
+use Kreait\Firebase\JWT\SecureToken;
+use Kreait\Firebase\JWT\Signer\None;
+use Kreait\Firebase\JWT\Token\Parser;
+use Kreait\Firebase\JWT\Util;
+use Lcobucci\JWT\Encoding\JoseEncoder;
+use Lcobucci\JWT\Signer;
 use Lcobucci\JWT\Signer\Key\InMemory;
 use Lcobucci\JWT\Signer\Rsa\Sha256;
-use Lcobucci\JWT\Token as JWT;
+use Lcobucci\JWT\UnencryptedToken;
 use Lcobucci\JWT\Validation\Constraint\IssuedBy;
+use Lcobucci\JWT\Validation\Constraint\LooseValidAt;
 use Lcobucci\JWT\Validation\Constraint\PermittedFor;
 use Lcobucci\JWT\Validation\Constraint\SignedWith;
-use Lcobucci\JWT\Validation\Constraint\ValidAt;
 use Lcobucci\JWT\Validation\ConstraintViolation;
 use Lcobucci\JWT\Validation\RequiredConstraintsViolated;
+use Lcobucci\JWT\Validation\Validator;
+use Psr\Clock\ClockInterface;
 use Throwable;
 
+use function assert;
+use function is_string;
+
+/**
+ * @internal
+ */
 final class WithLcobucciJWT implements Handler
 {
-    private string $projectId;
+    private readonly Parser $parser;
 
-    private Keys $keys;
+    private readonly Signer $signer;
 
-    private Clock $clock;
+    private readonly Validator $validator;
 
-    private Configuration $config;
+    private readonly bool $isRunOnEmulator;
 
-    public function __construct(string $projectId, Keys $keys, Clock $clock)
-    {
-        $this->projectId = $projectId;
-        $this->keys = $keys;
-        $this->clock = $clock;
+    /**
+     * @param non-empty-string $projectId
+     */
+    public function __construct(
+        private readonly string $projectId,
+        private readonly Keys $keys,
+        private readonly ClockInterface $clock,
+    ) {
+        $this->parser = new Parser(new JoseEncoder());
 
-        $this->config = Configuration::forSymmetricSigner(new Sha256(), InMemory::empty());
+        $this->isRunOnEmulator = Util::authEmulatorHost() !== '';
+
+        $this->signer = $this->isRunOnEmulator ? new None() : new Sha256();
+        $this->validator = new Validator();
     }
 
     public function handle(VerifyIdToken $action): Token
@@ -50,37 +70,40 @@ final class WithLcobucciJWT implements Handler
         $tokenString = $action->token();
 
         try {
-            $token = $this->config->parser()->parse($tokenString);
+            $token = $this->parser->parse($tokenString);
+            assert($token instanceof UnencryptedToken);
         } catch (Throwable $e) {
-            throw IdTokenVerificationFailed::withTokenAndReasons($tokenString, ['The token is invalid', $e->getMessage()]);
-        }
-
-        if (!($token instanceof JWT\Plain)) {
-            throw IdTokenVerificationFailed::withTokenAndReasons($tokenString, ['The token could not be decrypted']);
+            throw IdTokenVerificationFailed::withTokenAndReasons($tokenString, ['The token is invalid'.$e->getMessage()]);
         }
 
         $key = $this->getKey($token);
-        $clock = new FrozenClock($this->clock->now());
+        $clock = FrozenClock::at($this->clock->now());
         $leeway = new DateInterval('PT'.$action->leewayInSeconds().'S');
         $errors = [];
 
+        $constraints = [
+            new LooseValidAt($clock, $leeway),
+            new IssuedBy(...["https://securetoken.google.com/{$this->projectId}"]),
+            new PermittedFor($this->projectId),
+        ];
+
+        if ($key !== '' && !$this->isRunOnEmulator) {
+            $constraints[] = new SignedWith($this->signer, InMemory::plainText($key));
+        }
+
         try {
-            $this->config->validator()->assert($token, ...[
-                new ValidAt($clock, $leeway),
-                new IssuedBy(...["https://securetoken.google.com/{$this->projectId}"]),
-                new PermittedFor($this->projectId),
-                new SignedWith($this->config->signer(), InMemory::plainText($key)),
-            ]);
+            $this->validator->assert($token, ...$constraints);
 
             $this->assertUserAuthedAt($token, $clock->now()->add($leeway));
+
             if ($tenantId = $action->expectedTenantId()) {
                 $this->assertTenantId($token, $tenantId);
             }
         } catch (RequiredConstraintsViolated $e) {
-            $errors = \array_map(
-                static fn (ConstraintViolation $violation): string => '- '.$violation->getMessage(),
-                $e->violations()
-            );
+            $errors = array_filter(array_map(
+                static fn(ConstraintViolation $violation): string => $violation->getMessage(),
+                $e->violations(),
+            ));
         }
 
         if (!empty($errors)) {
@@ -97,6 +120,7 @@ final class WithLcobucciJWT implements Handler
         unset($claim);
 
         $headers = $token->headers()->all();
+
         foreach ($headers as &$header) {
             if ($header instanceof DateTimeInterface) {
                 $header = $header->getTimestamp();
@@ -104,61 +128,75 @@ final class WithLcobucciJWT implements Handler
         }
         unset($header);
 
-        return TokenInstance::withValues($tokenString, $headers, $claims);
+        if ($this->isRunOnEmulator) {
+            return InsecureToken::withValues($tokenString, $headers, $claims);
+        }
+
+        return SecureToken::withValues($tokenString, $headers, $claims);
     }
 
-    private function getKey(JWT $token): string
+    private function getKey(UnencryptedToken $token): string
     {
-        if (empty($keys = $this->keys->all())) {
-            throw IdTokenVerificationFailed::withTokenAndReasons($token->toString(), ["No keys are available to verify the token's signature."]);
+        $keys = $this->keys->all();
+        if ($keys === []) {
+            throw IdTokenVerificationFailed::withTokenAndReasons($token->toString(), ['No keys are available to verify the tokens signature.']);
+        }
+
+        if ($this->isRunOnEmulator && ($this->signer instanceof None)) {
+            return '';
         }
 
         $keyId = $token->headers()->get('kid');
-
-        if ($key = $keys[$keyId] ?? null) {
-            return $key;
+        if (!is_string($keyId) || $keyId === '') {
+            throw IdTokenVerificationFailed::withTokenAndReasons($token->toString(), ['No key ID was found to verify the signature of this token.']);
         }
 
-        throw IdTokenVerificationFailed::withTokenAndReasons($token->toString(), ["No public key matching the key ID '{$keyId}' was found to verify the signature of this token."]);
+        $key = $keys[$keyId] ?? null;
+
+        if ($key === null) {
+            throw IdTokenVerificationFailed::withTokenAndReasons($token->toString(), ["No public key matching the key ID '{$keyId}' was found to verify the signature of this token."]);
+        }
+
+        return $key;
     }
 
-    private function assertUserAuthedAt(JWT\Plain $token, DateTimeInterface $now): void
+    private function assertUserAuthedAt(UnencryptedToken $token, DateTimeInterface $now): void
     {
         /** @var int|DateTimeImmutable $authTime */
         $authTime = $token->claims()->get('auth_time');
 
         if (!$authTime) {
             throw RequiredConstraintsViolated::fromViolations(
-                new ConstraintViolation('The token is missing the "auth_time" claim.')
+                new ConstraintViolation('The token is missing the "auth_time" claim.'),
             );
         }
 
-        if (\is_numeric($authTime)) {
+        if (is_numeric($authTime)) {
             $authTime = new DateTimeImmutable('@'.((int) $authTime));
         }
 
         if ($now < $authTime) {
             throw RequiredConstraintsViolated::fromViolations(
-                new ConstraintViolation("The token's user must have authenticated in the past")
+                new ConstraintViolation("The token's user must have authenticated in the past"),
             );
         }
     }
 
-    private function assertTenantId(JWT\Plain $token, string $tenantId): void
+    private function assertTenantId(UnencryptedToken $token, string $tenantId): void
     {
         $claim = (array) $token->claims()->get('firebase', []);
 
         $tenant = $claim['tenant'] ?? null;
 
-        if (!\is_string($tenant)) {
+        if (!is_string($tenant)) {
             throw RequiredConstraintsViolated::fromViolations(
-                new ConstraintViolation('The ID token does not contain a tenant identifier')
+                new ConstraintViolation('The ID token does not contain a tenant identifier'),
             );
         }
 
         if ($tenant !== $tenantId) {
             throw RequiredConstraintsViolated::fromViolations(
-                new ConstraintViolation("The token's tenant ID did not match with the expected tenant ID")
+                new ConstraintViolation("The token's tenant ID did not match with the expected tenant ID"),
             );
         }
     }

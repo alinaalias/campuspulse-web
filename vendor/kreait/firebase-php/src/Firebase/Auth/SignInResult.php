@@ -4,36 +4,72 @@ declare(strict_types=1);
 
 namespace Kreait\Firebase\Auth;
 
-use Lcobucci\JWT\Configuration;
-use Lcobucci\JWT\Token\Plain;
+use Kreait\Firebase\JWT\Token\Parser;
+use Lcobucci\JWT\Encoding\JoseEncoder;
+use Lcobucci\JWT\UnencryptedToken;
+use stdClass;
+
+use function array_key_exists;
+use function assert;
+use function is_array;
+use function is_object;
+use function property_exists;
 
 final class SignInResult
 {
+    /**
+     * @var non-empty-string|null
+     */
     private ?string $idToken = null;
+
+    /**
+     * @var non-empty-string|null
+     */
     private ?string $accessToken = null;
+
+    /**
+     * @var non-empty-string|null
+     */
     private ?string $refreshToken = null;
+
+    /**
+     * @var positive-int|null
+     */
     private ?int $ttl = null;
-    /** @var array<string, mixed> */
+
+    /**
+     * @var array<non-empty-string, mixed>
+     */
     private array $data = [];
+
+    /**
+     * @var non-empty-string|null
+     */
     private ?string $firebaseUserId = null;
+
+    /**
+     * @var non-empty-string|null
+     */
     private ?string $tenantId = null;
 
-    private Configuration $config;
+    private readonly Parser $parser;
 
     private function __construct()
     {
-        $this->config = Configuration::forUnsecuredSigner();
+        $this->parser = new Parser(new JoseEncoder());
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param array<non-empty-string, mixed> $data
      */
     public static function fromData(array $data): self
     {
         $instance = new self();
 
-        if ($expiresIn = $data['expiresIn'] ?? $data['expires_in'] ?? null) {
-            $instance->ttl = (int) $expiresIn;
+        $expiresIn = (int) ($data['expiresIn'] ?? $data['expires_in'] ?? null);
+
+        if ($expiresIn > 0) {
+            $instance->ttl = $expiresIn;
         }
 
         $instance->idToken = $data['idToken'] ?? $data['id_token'] ?? null;
@@ -44,62 +80,63 @@ final class SignInResult
         return $instance;
     }
 
+    /**
+     * @return non-empty-string|null
+     */
     public function idToken(): ?string
     {
         return $this->idToken;
     }
 
+    /**
+     * @return non-empty-string|null
+     */
     public function firebaseUserId(): ?string
     {
-        // @codeCoverageIgnoreStart
-        if ($this->firebaseUserId) {
+        if ($this->firebaseUserId !== null) {
             return $this->firebaseUserId;
         }
-        // @codeCoverageIgnoreEnd
 
-        if ($this->idToken) {
-            $idToken = $this->config->parser()->parse($this->idToken);
-
-            // @codeCoverageIgnoreStart
-            if (!($idToken instanceof Plain)) {
-                return null;
-            }
-            // @codeCoverageIgnoreEnd
+        if ($this->idToken !== null) {
+            $idToken = $this->parser->parse($this->idToken);
+            assert($idToken instanceof UnencryptedToken);
 
             foreach (['sub', 'localId', 'user_id'] as $claim) {
-                if ($uid = $idToken->claims()->get($claim, false)) {
+                $uid = $idToken->claims()->get($claim, false);
+                if (is_string($uid) && $uid !== '') {
                     return $this->firebaseUserId = $uid;
                 }
             }
         }
 
-        if ($localId = $this->data['localId'] ?? null) {
+        $localId = $this->data['localId'] ?? null;
+        if (is_string($localId) && $localId !== '') {
             return $this->firebaseUserId = $localId;
         }
 
         return null;
     }
 
+    /**
+     * @return non-empty-string|null
+     */
     public function firebaseTenantId(): ?string
     {
-        if ($this->tenantId) {
+        if ($this->tenantId !== null) {
             return $this->tenantId;
         }
 
-        if ($this->idToken) {
-            $idToken = $this->config->parser()->parse($this->idToken);
+        if ($this->idToken !== null) {
+            $idToken = $this->parser->parse($this->idToken);
+            assert($idToken instanceof UnencryptedToken);
 
-            if (!($idToken instanceof Plain)) {
-                return null;
-            }
+            $firebaseClaims = $idToken->claims()->get('firebase', new stdClass());
 
-            $firebaseClaims = $idToken->claims()->get('firebase', new \stdClass());
-
-            if (\is_object($firebaseClaims) && \property_exists($firebaseClaims, 'tenant')) {
+            if (is_object($firebaseClaims) && property_exists($firebaseClaims, 'tenant')) {
                 return $this->tenantId = $firebaseClaims->tenant;
             }
 
-            if (\is_array($firebaseClaims) && \array_key_exists('tenant', $firebaseClaims)) {
+            if (is_array($firebaseClaims) && array_key_exists('tenant', $firebaseClaims)) {
                 return $this->tenantId = $firebaseClaims['tenant'];
             }
         }
@@ -107,23 +144,32 @@ final class SignInResult
         return null;
     }
 
+    /**
+     * @return non-empty-string|null
+     */
     public function accessToken(): ?string
     {
         return $this->accessToken;
     }
 
+    /**
+     * @return non-empty-string|null
+     */
     public function refreshToken(): ?string
     {
         return $this->refreshToken;
     }
 
+    /**
+     * @return positive-int|null
+     */
     public function ttl(): ?int
     {
         return $this->ttl;
     }
 
     /**
-     * @return array<string, mixed>
+     * @return array<non-empty-string, mixed>
      */
     public function data(): array
     {
@@ -131,16 +177,16 @@ final class SignInResult
     }
 
     /**
-     * @return array<string, mixed>
+     * @return array<non-empty-string, mixed>
      */
     public function asTokenResponse(): array
     {
         return [
             'token_type' => 'Bearer',
-            'access_token' => $this->accessToken(),
+            'access_token' => $this->accessToken,
             'id_token' => $this->idToken,
-            'refresh_token' => $this->refreshToken(),
-            'expires_in' => $this->ttl(),
+            'refresh_token' => $this->refreshToken,
+            'expires_in' => $this->ttl,
         ];
     }
 }
