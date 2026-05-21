@@ -15,7 +15,7 @@ if (!$stopId) {
 }
 
 try {
-    $firestore->database()
+    $firestore
         ->collection('Stops')
         ->document($stopId)
         ->delete();

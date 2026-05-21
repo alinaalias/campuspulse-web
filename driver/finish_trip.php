@@ -18,7 +18,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit();
     }
 
-    $db = $firestore->database();
+    $db = $firestore;
     $driverId = $_SESSION['user_id'];
     $passengerCount = 0;
 

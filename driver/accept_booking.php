@@ -24,7 +24,7 @@ if (empty($bookingId) || empty($driverId)) {
 }
 
 try {
-    $db = $firestore->database();
+    $db = $firestore;
 
     $driverSnap = $db->collection('Staffs')->document($driverId)->snapshot();
     $shuttleId = '';

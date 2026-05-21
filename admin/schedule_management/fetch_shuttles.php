@@ -9,7 +9,7 @@ if (!$zoneId) {
 }
 
 $format = $_GET['format'] ?? 'checkbox';
-$shuttles = $firestore->database()
+$shuttles = $firestore
     ->collection('Shuttles')
     ->where('zone_id', '=', $zoneId)
     ->where('status', '=', 'active')
@@ -25,7 +25,7 @@ foreach ($shuttles as $s) {
     $found = true;
     $shuttleId = $s->id();
 
-    $driversSnap = $firestore->database()
+    $driversSnap = $firestore
         ->collection('Staffs')
         ->where('role', '=', 'driver')
         ->where('assigned_shuttle_id', '=', $shuttleId)

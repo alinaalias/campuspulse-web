@@ -18,7 +18,7 @@ if (empty($bookingId)) {
     exit();
 }
 
-$db = $firestore->database();
+$db = $firestore;
 
 try {
     // 1. Fetch the Booking Data

@@ -17,7 +17,7 @@ $applicationId = $_GET['id'];
 $applicationData = null;
 
 try {
-    $db = $firestore->database();
+    $db = $firestore;
     $docRef = $db->collection('DriverApplications')->document($applicationId);
     $snapshot = $docRef->snapshot();
 

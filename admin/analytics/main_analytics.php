@@ -170,7 +170,7 @@ if (!$driverId && !empty($d['booking_id'])) {
     $bookingId = $d['booking_id'];
 
     try {
-        $bookingDoc = $firestore->database()
+        $bookingDoc = $firestore
             ->collection('Bookings')
             ->document($bookingId)
             ->snapshot();
@@ -183,7 +183,7 @@ if (!$driverId && !empty($d['booking_id'])) {
             if (!$driverId && !empty($bookingData['schedule_id'])) {
                 $scheduleId = $bookingData['schedule_id'];
 
-                $scheduleDoc = $firestore->database()
+                $scheduleDoc = $firestore
                     ->collection('Schedules')
                     ->document($scheduleId)
                     ->snapshot();

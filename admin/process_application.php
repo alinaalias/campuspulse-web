@@ -106,7 +106,7 @@ function sendSystemEmail($toEmail, $toName, $subject, $body)
 }
 
 try {
-    $db = $firestore->database();
+    $db = $firestore;
     $docRef = $db->collection('DriverApplications')->document($applicationId);
     $snapshot = $docRef->snapshot();
 

@@ -15,7 +15,7 @@ if (!$routeId) {
 }
 
 try {
-    $firestore->database()
+    $firestore
         ->collection('Routes')
         ->document($routeId)
         ->delete();

@@ -20,7 +20,7 @@ try {
     // Delete each selected schedule
     foreach ($ids as $id) {
         if (!empty($id)) {
-            $firestore->database()
+            $firestore
                 ->collection('Schedules')
                 ->document($id)
                 ->delete();

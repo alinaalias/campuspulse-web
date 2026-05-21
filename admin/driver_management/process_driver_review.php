@@ -50,7 +50,7 @@ if (empty($id) || empty($action)) {
 }
 
 try {
-    $db = $firestore->database();
+    $db = $firestore;
     $driverRef = $db->collection('Staffs')->document($id);
     $snap = $driverRef->snapshot();
 

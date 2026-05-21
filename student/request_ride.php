@@ -43,7 +43,7 @@ function haversineDistance($lat1, $lon1, $lat2, $lon2)
 }
 
 try {
-    $db = $firestore->database();
+    $db = $firestore;
 
     // Fetch Pickup Coordinates
     $pickupSnap = $db->collection('Stops')->document($pickupStopId)->snapshot();

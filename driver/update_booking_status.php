@@ -15,7 +15,7 @@ $driverId = $_SESSION['user_id'];
 $validStatuses = ['arriving', 'arrived', 'onboard', 'completed', 'cancelled'];
 
 if ($id && in_array($status, $validStatuses)) {
-    $db = $firestore->database();
+    $db = $firestore;
 
     // 1. Update the Booking
     $updateFields = [

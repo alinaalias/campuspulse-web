@@ -10,7 +10,7 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
 }
 
 try {
-    $db = $firestore->database();
+    $db = $firestore;
     $applicationsRef = $db->collection('DriverApplications')->where('status', '=', 'pending');
     $snapshot = $applicationsRef->documents();
 

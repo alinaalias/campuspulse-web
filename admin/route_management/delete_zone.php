@@ -16,7 +16,7 @@ if (!$id) {
 
 try {
     // PERMANENT DELETE: Wipes the document from Firestore completely
-    $firestore->database()
+    $firestore
         ->collection('Zones')
         ->document($id)
         ->delete();

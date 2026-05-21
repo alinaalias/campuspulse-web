@@ -41,7 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $declHealthOk = isset($_POST['decl_health_ok']);
 
     try {
-        $db = $firestore->database();
+        $db = $firestore;
 
         // --- NEW: DUPLICATE GATEKEEPER START ---
 

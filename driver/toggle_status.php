@@ -9,7 +9,7 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'driver') {
 }
 
 $driverId = $_SESSION['user_id'];
-$db = $firestore->database();
+$db = $firestore;
 
 try {
     $driverRef = $db->collection('Staffs')->document($driverId);

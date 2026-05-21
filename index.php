@@ -14,7 +14,7 @@ $nowTimestamp = strtotime($now);
 $activeAnnouncements = [];
 
 try {
-    $announcementsRef = $firestore->database()
+    $announcementsRef = $firestore
         ->collection('Announcements')
         ->where('status', 'in', ['active', 'scheduled'])
         ->documents();

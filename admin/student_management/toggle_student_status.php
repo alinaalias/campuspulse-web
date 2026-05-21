@@ -32,7 +32,7 @@ if (!in_array($targetStatus, $validStatuses)) {
 $adminName = $_SESSION['full_name'] ?? 'Admin';
 
 try {
-    $firestore->database()
+    $firestore
         ->collection('Students')
         ->document($id)
         ->update([

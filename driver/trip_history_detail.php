@@ -78,7 +78,7 @@ $ratingList = [];
 $tripLogs = [];
 
 try {
-    $db = $firestore->database();
+    $db = $firestore;
 
     // SCHEDULED TRIPS
     if ($tripType === 'schedule') {

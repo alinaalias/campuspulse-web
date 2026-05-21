@@ -16,7 +16,7 @@ if (empty($scheduleId)) {
 }
 
 try {
-    $db = $firestore->database();
+    $db = $firestore;
     $schedRef = $db->collection('Schedules')->document($scheduleId);
     $schedSnap = $schedRef->snapshot();
 

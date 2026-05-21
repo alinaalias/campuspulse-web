@@ -8,7 +8,7 @@ if (!$zoneId) {
     exit();
 }
 
-$routes = $firestore->database()
+$routes = $firestore
     ->collection('Routes')
     ->where('zone_id', '=', $zoneId)
     ->where('status', '=', 'active')

@@ -15,7 +15,7 @@ if (!$bookingId) {
     exit();
 }
 
-$db = $firestore->database();
+$db = $firestore;
 
 // ==========================================
 // 1. AUTO-ASSIGN LOGIC (If no driver selected)

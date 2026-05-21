@@ -21,7 +21,7 @@ if (!$date || !$timeStr || !$routeId || !$direction || !$shuttleId) {
 }
 
 try {
-    $db = $firestore->database();
+    $db = $firestore;
 
     // 1. Fetch Shuttle
     $shuttleSnap = $db->collection('Shuttles')->document($shuttleId)->snapshot();

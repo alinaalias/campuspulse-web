@@ -14,7 +14,7 @@ session_write_close();
 $now = date('Y-m-d H:i:s');
 $today = date('Y-m-d');
 $serverMinutes = (intval(date('H')) * 60) + intval(date('i')); 
-$db = $firestore->database();
+$db = $firestore;
 
 // ===================================================================================
 // 1. BULLETPROOF FETCH: SMART REPLACEMENT CANDIDATES 

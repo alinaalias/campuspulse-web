@@ -49,7 +49,7 @@ if (empty($alert_type)) {
 
 $driverName = $_SESSION['full_name'] ?? 'Unknown Driver';
 $driverId = $_SESSION['user_id'] ?? 'Unknown ID';
-$db = $firestore->database();
+$db = $firestore;
 $today = date('Y-m-d');
 
 // Fetch Context Data (Which shuttle and schedule are affected?)

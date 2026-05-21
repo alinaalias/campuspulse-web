@@ -17,7 +17,7 @@ if (!$rawId) {
     exit();
 }
 
-$db = $firestore->database();
+$db = $firestore;
 
 // Gatekeeper - Admin Status Check & Compliance
 $driverSnap = $db->collection('Staffs')->document($driverId)->snapshot();
