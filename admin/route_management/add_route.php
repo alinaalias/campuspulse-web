@@ -7,11 +7,11 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
 }
 
 $zones = [];
-foreach ($firestore->database()->collection('Zones')->where('status', '=', 'active')->documents() as $z) {
+foreach ($firestore->collection('Zones')->where('status', '=', 'active')->documents() as $z) {
     $zones[] = $z->data();
 }
 $stops = [];
-foreach ($firestore->database()->collection('Stops')->where('status', '=', 'active')->documents() as $s) {
+foreach ($firestore->collection('Stops')->where('status', '=', 'active')->documents() as $s) {
     $stops[] = $s->data();
 }
 
@@ -40,7 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Start and End stops cannot be identical.");
             }
 
-            $firestore->database()->collection('Routes')->document($routeId)->set([
+            $firestore->collection('Routes')->document($routeId)->set([
                 'route_id' => $routeId,
                 'route_name' => $route_name,
                 'zone_id' => $zone_id,

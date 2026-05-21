@@ -13,7 +13,7 @@ $success = '';
 
 /* Fetch active shuttles */
 $shuttles = [];
-foreach ($firestore->database()->collection('Shuttles')->where('status', '=', 'active')->documents() as $s) {
+foreach ($firestore->collection('Shuttles')->where('status', '=', 'active')->documents() as $s) {
     $shuttles[] = $s->id();
 }
 
@@ -51,7 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         while (!$isUnique) {
             // Check Firestore for this specific email
-            $query = $firestore->database()->collection('Staffs')->where('email', '=', $finalEmail)->documents();
+            $query = $firestore->collection('Staffs')->where('email', '=', $finalEmail)->documents();
 
             // If the iterator is empty, it means no documents found -> Unique!
             if ($query->isEmpty()) {
@@ -68,7 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $password_hash = password_hash($password, PASSWORD_DEFAULT);
 
         try {
-            $firestore->database()->collection('Staffs')->document($driverId)->set([
+            $firestore->collection('Staffs')->document($driverId)->set([
                 'full_name' => $full_name,
                 'email' => $finalEmail, // Uses the final unique email
                 'phone_number' => $phone,

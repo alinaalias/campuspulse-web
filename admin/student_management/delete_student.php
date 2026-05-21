@@ -7,7 +7,7 @@ if (!$id) {
     exit();
 }
 
-$studentRef = $firestore->database()->collection('Students')->document($id);
+$studentRef = $firestore->collection('Students')->document($id);
 $snapshot = $studentRef->snapshot();
 
 if (!$snapshot->exists()) {

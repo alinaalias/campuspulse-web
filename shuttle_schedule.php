@@ -29,7 +29,7 @@ function getCachedCollection($firestore, $collectionName, $keyField, $valueField
     }
     $map = [];
     try {
-        $docs = $firestore->database()->collection($collectionName)->documents();
+        $docs = $firestore->collection($collectionName)->documents();
         foreach ($docs as $doc) {
             $data = $doc->data();
             $id = $doc->id();
@@ -51,7 +51,7 @@ $routesMap = getCachedCollection($firestore, 'Routes', 'id');
 $stopsMap = getCachedCollection($firestore, 'Stops', 'stop_id');
 
 // 3. FETCH SCHEDULES
-$query = $firestore->database()->collection('Schedules')
+$query = $firestore->collection('Schedules')
     ->where('status', '=', 'published')
     ->where('date', '>=', $startDate)
     ->where('date', '<=', $endDate)

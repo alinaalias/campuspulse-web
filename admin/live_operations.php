@@ -8,7 +8,7 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
 }
 
 $zones = [];
-$zonesSnapshot = $firestore->database()->collection('Zones')->documents();
+$zonesSnapshot = $firestore->collection('Zones')->documents();
 foreach ($zonesSnapshot as $z) {
     $zData = $z->data();
     $zData['id'] = $z->id();
@@ -20,7 +20,7 @@ foreach ($zonesSnapshot as $z) {
 }
 
 $stops = [];
-$stopsSnapshot = $firestore->database()->collection('Stops')->documents();
+$stopsSnapshot = $firestore->collection('Stops')->documents();
 foreach ($stopsSnapshot as $s) {
     $sData = $s->data();
     $sData['id'] = $s->id();
@@ -31,7 +31,7 @@ foreach ($stopsSnapshot as $s) {
 
 $shuttleToDriver = [];
 try {
-    $drivers = $firestore->database()->collection('Staffs')
+    $drivers = $firestore->collection('Staffs')
         ->where('role', '==', 'driver')
         ->documents();
 

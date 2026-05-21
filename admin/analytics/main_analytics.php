@@ -104,7 +104,7 @@ $studentIdsMap = [];
 $studentPhotosMap = []; // NEW: For Student Profile Pictures
 
 try {
-    foreach ($firestore->database()->collection('Staffs')->documents() as $doc) {
+    foreach ($firestore->collection('Staffs')->documents() as $doc) {
         if ($doc->exists()) {
             $data = $doc->data();
             $driversMap[$doc->id()] = $data['full_name'] ?? 'Unknown';
@@ -112,19 +112,19 @@ try {
             $driverPhotosMap[$doc->id()] = resolveImageUrl($data['profile_pic'] ?? ''); // Fetch Pic
         }
     }
-    foreach ($firestore->database()->collection('Zones')->documents() as $doc) {
+    foreach ($firestore->collection('Zones')->documents() as $doc) {
         if ($doc->exists())
             $zonesMap[$doc->id()] = $doc->data()['name'] ?? 'Unknown Zone';
     }
-    foreach ($firestore->database()->collection('Routes')->documents() as $doc) {
+    foreach ($firestore->collection('Routes')->documents() as $doc) {
         if ($doc->exists())
             $routesMap[$doc->id()] = $doc->data()['route_name'] ?? $doc->id();
     }
-    foreach ($firestore->database()->collection('Stops')->documents() as $doc) {
+    foreach ($firestore->collection('Stops')->documents() as $doc) {
         if ($doc->exists())
             $stopsMap[$doc->data()['stop_id'] ?? $doc->id()] = $doc->data()['name'] ?? 'Unknown Stop';
     }
-    foreach ($firestore->database()->collection('Students')->documents() as $doc) {
+    foreach ($firestore->collection('Students')->documents() as $doc) {
         if ($doc->exists()) {
             $data = $doc->data();
             $key = $data['uid'] ?? $doc->id();
@@ -143,7 +143,7 @@ $ratingsSum = 0;
 $ratingsCount = 0;
 
 try {
-    foreach ($firestore->database()->collection('Ratings')->documents() as $doc) {
+    foreach ($firestore->collection('Ratings')->documents() as $doc) {
         if (!$doc->exists()) continue;
 
         $d = $doc->data();
@@ -260,7 +260,7 @@ $uniqueUsersCurrent = [];
 $uniqueUsersPrevious = [];
 
 try {
-    $bookingsDocs = $firestore->database()->collection('Bookings')->documents();
+    $bookingsDocs = $firestore->collection('Bookings')->documents();
     foreach ($bookingsDocs as $doc) {
         if (!$doc->exists())
             continue;
@@ -379,7 +379,7 @@ try {
 
 $loadFactors = [];
 try {
-    $schedulesDocs = $firestore->database()->collection('Schedules')->where('date', '>=', $timeframeStr)->documents();
+    $schedulesDocs = $firestore->collection('Schedules')->where('date', '>=', $timeframeStr)->documents();
     foreach ($schedulesDocs as $doc) {
         if (!$doc->exists())
             continue;

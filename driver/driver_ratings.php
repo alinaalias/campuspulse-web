@@ -14,7 +14,7 @@ $totalScore = 0;
 $count = 0;
 $starCounts = [5 => 0, 4 => 0, 3 => 0, 2 => 0, 1 => 0];
 
-$query = $firestore->database()->collection('Ratings')
+$query = $firestore->collection('Ratings')
     ->where('driver_id', '=', $driverId)
     ->orderBy('timestamp', 'DESC')
     ->documents();
@@ -48,7 +48,7 @@ foreach ($query as $doc) {
     $studentName = "Passenger";
     if (!empty($d['user_id'])) {
         try {
-            $stSnap = $firestore->database()->collection('Students')->document($d['user_id'])->snapshot();
+            $stSnap = $firestore->collection('Students')->document($d['user_id'])->snapshot();
             if ($stSnap->exists()) {
                 $fullName = $stSnap->data()['full_name'] ?? "Passenger";
                 $parts = explode(' ', $fullName);
@@ -83,7 +83,7 @@ $average = ($count > 0) ? round($totalScore / $count, 1) : 0.0;
 
 if ($count > 0) {
     try {
-        $firestore->database()->collection('Staffs')->document($driverId)->update([
+        $firestore->collection('Staffs')->document($driverId)->update([
             ['path' => 'rating', 'value' => $average],
             ['path' => 'total_ratings', 'value' => $count]
         ]);

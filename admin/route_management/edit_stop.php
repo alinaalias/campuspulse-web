@@ -13,7 +13,7 @@ if (!$stopId) {
     exit();
 }
 
-$stopRef = $firestore->database()->collection('Stops')->document($stopId);
+$stopRef = $firestore->collection('Stops')->document($stopId);
 $stopSnap = $stopRef->snapshot();
 
 if (!$stopSnap->exists()) {
@@ -23,7 +23,7 @@ if (!$stopSnap->exists()) {
 $stop = $stopSnap->data();
 
 $zones = [];
-foreach ($firestore->database()->collection('Zones')->where('status', '=', 'active')->documents() as $z) {
+foreach ($firestore->collection('Zones')->where('status', '=', 'active')->documents() as $z) {
     $zones[] = $z->data();
 }
 

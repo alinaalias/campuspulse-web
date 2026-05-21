@@ -16,7 +16,7 @@ $tomorrow = date('Y-m-d', strtotime('+1 day'));
 $currentTime = date('H:i');
 $currentTimestamp = time();
 
-$query = $firestore->database()->collection('Schedules')
+$query = $firestore->collection('Schedules')
     ->where('driver_id', '=', $driverId)
     ->where('date', '>=', $today)
     ->orderBy('date', 'ASC')
@@ -46,7 +46,7 @@ foreach ($documents as $doc) {
     }
 
     // Fetch Route
-    $rSnap = $firestore->database()->collection('Routes')->document($data['route_id'])->snapshot();
+    $rSnap = $firestore->collection('Routes')->document($data['route_id'])->snapshot();
     $data['route_name'] = $rSnap->exists() ? ($rSnap->data()['route_name'] ?? $data['route_id']) : 'Unknown Route';
 
     $etas = $data['etas'] ?? [];
@@ -66,7 +66,7 @@ foreach ($documents as $doc) {
         $destId = array_key_last($etas);
 
     if (!empty($destId)) {
-        $sSnap = $firestore->database()->collection('Stops')->document($destId)->snapshot();
+        $sSnap = $firestore->collection('Stops')->document($destId)->snapshot();
         $baseName = $sSnap->exists() ? ($sSnap->data()['stop_name'] ?? $sSnap->data()['name'] ?? 'Destination') : 'Destination';
         $destTime = $etas[$destId] ?? '';
         $data['dest_name'] = $baseName . ($destTime ? " ($destTime)" : "");

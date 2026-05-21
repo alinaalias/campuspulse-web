@@ -9,7 +9,7 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
 }
 
 // Fetch all students (Removed PHP search and pagination to allow instant JS filtering)
-$studentsSnapshot = $firestore->database()->collection('Students')->documents();
+$studentsSnapshot = $firestore->collection('Students')->documents();
 $students = [];
 
 foreach ($studentsSnapshot as $student) {

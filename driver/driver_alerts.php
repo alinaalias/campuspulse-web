@@ -16,7 +16,7 @@ $lastReadTime = 0;
 try {
 
 
-    $driverRef = $firestore->database()->collection('Staffs')->document($driverId);
+    $driverRef = $firestore->collection('Staffs')->document($driverId);
     $driverSnap = $driverRef->snapshot();
 
     if ($driverSnap->exists()) {
@@ -36,7 +36,7 @@ $alerts = [];
 
 try {
 
-    $docs = $firestore->database()->collection('Announcements')
+    $docs = $firestore->collection('Announcements')
         ->where('status', 'in', ['active', 'scheduled'])
         ->orderBy('created_at', 'DESC')
         ->documents();
@@ -87,7 +87,7 @@ try {
 }
 
 try {
-    $notificationsDocs = $firestore->database()->collection('Notifications')
+    $notificationsDocs = $firestore->collection('Notifications')
         ->where('user_id', '=', $driverId)
         ->documents();
 
@@ -113,7 +113,7 @@ try {
 
         // Mark as read immediately
         if ($isRead === false) {
-            $firestore->database()->collection('Notifications')->document($doc->id())->update([
+            $firestore->collection('Notifications')->document($doc->id())->update([
                 ['path' => 'is_read', 'value' => true]
             ]);
         }
@@ -124,7 +124,7 @@ try {
 
 
 try {
-    $driverData = $firestore->database()->collection('Staffs')->document($driverId)->snapshot()->data();
+    $driverData = $firestore->collection('Staffs')->document($driverId)->snapshot()->data();
     $todayDate = new DateTime('today');
     $licExp = $driverData['license_expiry'] ?? '';
     $psvExp = $driverData['psv_expiry'] ?? '';

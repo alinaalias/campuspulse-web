@@ -2,7 +2,6 @@
 .gitignore
 node_modules/
 .env
-service-account.json
 *.log
 *.tmp
 temp/

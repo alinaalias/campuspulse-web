@@ -2,7 +2,7 @@
 // Fetch pending driver count for the badge
 $pendingCount = 0;
 try {
-    $pendingQuery = $firestore->database()->collection('DriverApplications')
+    $pendingQuery = $firestore->collection('DriverApplications')
         ->where('status', '=', 'pending')
         ->documents();
 
@@ -16,7 +16,7 @@ try {
 
 $pendingDriverReviewsCount = 0;
 try {
-    $reviewQuery = $firestore->database()->collection('Staffs')
+    $reviewQuery = $firestore->collection('Staffs')
         ->where('role', '=', 'driver')
         ->where('status', '=', 'pending_review')
         ->documents();
@@ -31,7 +31,7 @@ try {
 // Fetch Pending Emergency Actions (Driver Breakdowns)
 $pendingEmergenciesCount = 0;
 try {
-    $emergencyQuery = $firestore->database()->collection('Announcements')
+    $emergencyQuery = $firestore->collection('Announcements')
         ->where('status', '=', 'active')
         ->where('tag', '=', '#Emergency')
         ->documents();

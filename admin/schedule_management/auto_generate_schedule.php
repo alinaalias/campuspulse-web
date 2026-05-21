@@ -33,7 +33,7 @@ $shuttleCount = count($shuttles);
 /* =========================
    Fetch route
 ========================= */
-$routeSnap = $firestore->database()->collection('Routes')->document($routeId)->snapshot();
+$routeSnap = $firestore->collection('Routes')->document($routeId)->snapshot();
 if (!$routeSnap->exists()) {
     echo json_encode(['success' => false, 'message' => 'Route not found']);
     exit();
@@ -79,7 +79,7 @@ $windowMap = [
    DUPLICATE CHECK
 ========================= */
 foreach ($peaks as $peak) {
-    $existing = $firestore->database()->collection('Schedules')
+    $existing = $firestore->collection('Schedules')
         ->where('date', '=', $date)
         ->where('route_id', '=', $routeId)
         ->where('peak', '=', $peak)
@@ -115,7 +115,7 @@ foreach ($peaks as $peakKey) {
         $rotationIndex++;
 
         /* Shuttle capacity check */
-        $shuttleSnap = $firestore->database()->collection('Shuttles')->document($shuttleId)->snapshot();
+        $shuttleSnap = $firestore->collection('Shuttles')->document($shuttleId)->snapshot();
         if (!$shuttleSnap->exists()) {
             $time += $interval * 60;
             continue;
@@ -128,7 +128,7 @@ foreach ($peaks as $peakKey) {
         }
 
         /* Drivers for shuttle */
-        $driversSnap = $firestore->database()->collection('Staffs')
+        $driversSnap = $firestore->collection('Staffs')
             ->where('role', '=', 'driver')
             ->where('assigned_shuttle_id', '=', $shuttleId)
             ->where('status', '=', 'active')
@@ -158,7 +158,7 @@ foreach ($peaks as $peakKey) {
             }
 
             /* ROBUST DRIVER CLASH CHECK */
-            $driverSchedules = $firestore->database()->collection('Schedules')
+            $driverSchedules = $firestore->collection('Schedules')
                 ->where('date', '=', $date)
                 ->where('driver_id', '=', $driverId)
                 ->documents();
@@ -194,7 +194,7 @@ foreach ($peaks as $peakKey) {
             // SUCCESS: Create Schedule
             $scheduleId = generateCustomId('schedules', 'SCHED', $firestore);
 
-            $firestore->database()->collection('Schedules')->document($scheduleId)->set([
+            $firestore->collection('Schedules')->document($scheduleId)->set([
                 'schedule_id' => $scheduleId,
                 'date' => $date,
                 'direction' => $direction,

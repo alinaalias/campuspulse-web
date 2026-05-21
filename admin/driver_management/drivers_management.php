@@ -9,13 +9,13 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
 
 /* Fetch shuttles */
 $shuttles = [];
-foreach ($firestore->database()->collection('Shuttles')->where('status', '=', 'active')->documents() as $s) {
+foreach ($firestore->collection('Shuttles')->where('status', '=', 'active')->documents() as $s) {
     if ($s->exists())
         $shuttles[] = $s->id();
 }
 
 /* Fetch drivers */
-$driversSnapshot = $firestore->database()->collection('Staffs')->where('role', '=', 'driver')->documents();
+$driversSnapshot = $firestore->collection('Staffs')->where('role', '=', 'driver')->documents();
 $drivers = [];
 
 $totalActive = 0;
@@ -31,7 +31,7 @@ $todayDate = new DateTime('today');
 $driverRatings = [];
 
 // Fetch all ratings once
-$ratingsSnapshot = $firestore->database()->collection('Ratings')->documents();
+$ratingsSnapshot = $firestore->collection('Ratings')->documents();
 
 foreach ($ratingsSnapshot as $r) {
     if (!$r->exists()) continue;
@@ -92,7 +92,7 @@ foreach ($driversSnapshot as $doc) {
 
     // --- NEW: COMPLIANCE LOCK LOGIC ---
     if ($data['is_expired'] && ($data['status'] ?? '') === 'active') {
-        $firestore->database()->collection('Staffs')->document($doc->id())->update([
+        $firestore->collection('Staffs')->document($doc->id())->update([
             ['path' => 'status', 'value' => 'inactive'],
             ['path' => 'last_status_change_reason', 'value' => 'System Auto-Lock (Compliance Expired)'],
             ['path' => 'last_status_change_at', 'value' => date('Y-m-d H:i:s')],

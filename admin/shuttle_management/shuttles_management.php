@@ -21,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $capacity = intval($_POST['capacity'] ?? 13);
 
             $shuttleId = generateCustomId('shuttles', 'CPS', $firestore);
-            $firestore->database()->collection('Shuttles')->document($shuttleId)->set([
+            $firestore->collection('Shuttles')->document($shuttleId)->set([
                 'shuttle_id' => $shuttleId,
                 'zone_id' => $zoneId,
                 'capacity' => $capacity,
@@ -56,14 +56,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $updates[] = ['path' => 'job_status', 'value' => 'idle'];
             }
 
-            $firestore->database()->collection('Shuttles')->document($shuttleId)->update($updates);
+            $firestore->collection('Shuttles')->document($shuttleId)->update($updates);
             header('Location: shuttles_management.php?msg=updated');
             exit();
 
         } elseif ($action === 'delete') {
             $shuttleId = $_POST['shuttle_id'] ?? '';
             if ($shuttleId) {
-                $firestore->database()->collection('Shuttles')->document($shuttleId)->delete();
+                $firestore->collection('Shuttles')->document($shuttleId)->delete();
                 header('Location: shuttles_management.php?msg=deleted');
                 exit();
             }
@@ -78,7 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
    FETCH ZONES (ID → NAME)
 ========================= */
 $zoneMap = [];
-$zonesSnapshot = $firestore->database()->collection('Zones')->documents();
+$zonesSnapshot = $firestore->collection('Zones')->documents();
 foreach ($zonesSnapshot as $z) {
     $zoneMap[$z->id()] = $z->data()['name'] ?? 'Unknown';
 }
@@ -86,13 +86,13 @@ foreach ($zonesSnapshot as $z) {
 /* =========================
    FETCH SHUTTLES
 ========================= */
-$shuttles = $firestore->database()->collection('Shuttles')->documents();
+$shuttles = $firestore->collection('Shuttles')->documents();
 
 /* =========================
    DRIVER REVERSE LOOKUP (Staffs)
 ========================= */
 $assignedDrivers = [];
-$staffsSnap = $firestore->database()->collection('Staffs')->where('role', '=', 'driver')->documents();
+$staffsSnap = $firestore->collection('Staffs')->where('role', '=', 'driver')->documents();
 foreach ($staffsSnap as $doc) {
     if (!$doc->exists())
         continue;
@@ -414,7 +414,7 @@ include $depth . 'layout/admin/header.php';
 
                     $tripsToday = 0;
                     try {
-                        $query = $firestore->database()->collection('Bookings')->where('shuttle_id', '=', $doc->id())->where('date', '=', $today);
+                        $query = $firestore->collection('Bookings')->where('shuttle_id', '=', $doc->id())->where('date', '=', $today);
                         if (method_exists($query, 'count')) {
                             $agg = $query->count();
                             if (is_int($agg)) {

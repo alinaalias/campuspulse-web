@@ -26,7 +26,7 @@ $finalValue = ($shuttleId === '' || $shuttleId === 'null') ? null : $shuttleId;
 try {
     // 5. Pre-flight Check: Is this shuttle already taken?
     if ($finalValue !== null) {
-        $existingStaffs = $firestore->database()->collection('Staffs')
+        $existingStaffs = $firestore->collection('Staffs')
             ->where('assigned_shuttle_id', '=', $finalValue)
             ->documents();
             
@@ -38,7 +38,7 @@ try {
         }
     }
 
-    $ref = $firestore->database()->collection('Staffs')->document($driverId);
+    $ref = $firestore->collection('Staffs')->document($driverId);
 
     // 6. Update the Database
     $ref->update([

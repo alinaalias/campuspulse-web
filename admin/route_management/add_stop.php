@@ -7,7 +7,7 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
 }
 
 $zones = [];
-foreach ($firestore->database()->collection('Zones')->where('status', '=', 'active')->documents() as $z) {
+foreach ($firestore->collection('Zones')->where('status', '=', 'active')->documents() as $z) {
     $zones[] = $z->data();
 }
 
@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         try {
             $stopId = generateCustomId('stops', 'STOP', $firestore);
-            $firestore->database()->collection('Stops')->document($stopId)->set([
+            $firestore->collection('Stops')->document($stopId)->set([
                 'stop_id' => $stopId,
                 'name' => $name,
                 'lat' => $lat,

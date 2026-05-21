@@ -10,13 +10,13 @@ $today = date('Y-m-d');
 
 try {
     // Find all schedules BEFORE today that are NOT YET archived
-    $pastSchedules = $firestore->database()->collection('Schedules')
+    $pastSchedules = $firestore->collection('Schedules')
         ->where('date', '<', $today)
         ->where('status', '!=', 'archived') 
         ->documents();
 
     $count = 0;
-    $batch = $firestore->database()->batch();
+    $batch = $firestore->batch();
     $batchCount = 0;
 
     foreach ($pastSchedules as $doc) {
@@ -30,7 +30,7 @@ try {
 
         if ($batchCount >= 400) {
             $batch->commit();
-            $batch = $firestore->database()->batch();
+            $batch = $firestore->batch();
             $batchCount = 0;
         }
     }

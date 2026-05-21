@@ -15,7 +15,7 @@ if (!$id) {
 }
 
 // Fetch Student Data
-$studentRef = $firestore->database()->collection('Students')->document($id);
+$studentRef = $firestore->collection('Students')->document($id);
 $studentSnap = $studentRef->snapshot();
 
 if (!$studentSnap->exists()) {

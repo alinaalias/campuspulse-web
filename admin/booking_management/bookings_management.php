@@ -13,11 +13,11 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
 $todayStr = date('Y-m-d');
 $now = time();
 
-$batch = $firestore->database()->batch();
+$batch = $firestore->batch();
 $updatesCount = 0;
 
 // === LAZY EXECUTION 1: AUTO-ARCHIVE 15-MIN OVERDUE SCHEDULES ===
-$activeTodaySchedules = $firestore->database()->collection('Schedules')
+$activeTodaySchedules = $firestore->collection('Schedules')
     ->where('date', '=', $todayStr)
     ->where('status', 'in', ['published', 'active'])
     ->documents();
@@ -34,7 +34,7 @@ foreach ($activeTodaySchedules as $doc) {
 }
 
 // === LAZY EXECUTION 2: ESCALATE OVERDUE ON-DEMAND TO ADMIN_REVIEW ===
-$pendingBookings = $firestore->database()->collection('Bookings')
+$pendingBookings = $firestore->collection('Bookings')
     ->where('type', '=', 'ondemand')
     ->where('status', 'in', ['pending', 'searching'])
     ->documents();
@@ -62,7 +62,7 @@ $driversMap = [];
 $driversShuttleMap = [];
 $zonesMap = [];
 
-$studentsDocs = $firestore->database()->collection('Students')->documents();
+$studentsDocs = $firestore->collection('Students')->documents();
 foreach ($studentsDocs as $doc) {
     if ($doc->exists()) {
         $studentsMap[$doc->id()] = $doc->data()['full_name'] ?? 'Unknown Student';
@@ -70,7 +70,7 @@ foreach ($studentsDocs as $doc) {
     }
 }
 
-$staffsDocs = $firestore->database()->collection('Staffs')->documents();
+$staffsDocs = $firestore->collection('Staffs')->documents();
 foreach ($staffsDocs as $doc) {
     if ($doc->exists() && isset($doc->data()['role']) && $doc->data()['role'] === 'driver') {
         $driversMap[$doc->id()] = $doc->data()['full_name'] ?? 'Unknown Driver';
@@ -78,7 +78,7 @@ foreach ($staffsDocs as $doc) {
     }
 }
 
-$zonesDocs = $firestore->database()->collection('Zones')->documents();
+$zonesDocs = $firestore->collection('Zones')->documents();
 foreach ($zonesDocs as $doc) {
     if ($doc->exists()) {
         $zonesMap[$doc->id()] = $doc->data()['name'] ?? $doc->id();
@@ -86,7 +86,7 @@ foreach ($zonesDocs as $doc) {
 }
 
 $stops = [];
-foreach ($firestore->database()->collection('Stops')->documents() as $st) {
+foreach ($firestore->collection('Stops')->documents() as $st) {
     $stops[$st->data()['stop_id']] = $st->data()['name'] ?? $st->id();
 }
 
@@ -95,7 +95,7 @@ $futureManifest = [];
 $historyData = [];
 
 // Horizon 1 Data ($liveRadar)
-$activeOndemandBookings = $firestore->database()->collection('Bookings')
+$activeOndemandBookings = $firestore->collection('Bookings')
     ->where('type', '=', 'ondemand')
     ->documents();
 
@@ -135,7 +135,7 @@ usort($liveRadar, function ($a, $b) {
 });
 
 // Horizon 2 & 3 Data
-$bookingDocs = $firestore->database()->collection('Bookings')->documents();
+$bookingDocs = $firestore->collection('Bookings')->documents();
 foreach ($bookingDocs as $doc) {
     if (!$doc->exists()) continue;
     $data = $doc->data();
@@ -148,7 +148,7 @@ foreach ($bookingDocs as $doc) {
     $historyData[] = $data;
 }
 
-$scheduleDocs = $firestore->database()->collection('Schedules')->documents();
+$scheduleDocs = $firestore->collection('Schedules')->documents();
 foreach ($scheduleDocs as $doc) {
     if (!$doc->exists()) continue;
     $data = $doc->data();
@@ -160,7 +160,7 @@ foreach ($scheduleDocs as $doc) {
 }
 
 $ratingsMap = [];
-$ratingsDocs = $firestore->database()->collection('Ratings')->documents();
+$ratingsDocs = $firestore->collection('Ratings')->documents();
 foreach ($ratingsDocs as $rDoc) {
     if (!$rDoc->exists())
         continue;
@@ -171,7 +171,7 @@ foreach ($ratingsDocs as $rDoc) {
     }
 }
 
-$scheduledBookingHistoryDocs = $firestore->database()->collection('Bookings')->documents();
+$scheduledBookingHistoryDocs = $firestore->collection('Bookings')->documents();
 foreach ($scheduledBookingHistoryDocs as $doc) {
     if (!$doc->exists()) continue;
     $data = $doc->data();
@@ -197,7 +197,7 @@ foreach ($scheduledBookingHistoryDocs as $doc) {
     $historyData[] = $data;
 }
 
-$scheduledHistoryDocs = $firestore->database()->collection('Schedules')->documents();
+$scheduledHistoryDocs = $firestore->collection('Schedules')->documents();
 foreach ($scheduledHistoryDocs as $doc) {
     if (!$doc->exists()) continue;
     $data = $doc->data();
@@ -209,7 +209,7 @@ foreach ($scheduledHistoryDocs as $doc) {
     $scheduleId = $data['schedule_id'] ?? $doc->id();
     $totalFare = 0;
     $manifestList = [];
-    $schFareDocs = $firestore->database()->collection('Bookings')
+    $schFareDocs = $firestore->collection('Bookings')
         ->where('schedule_id', '=', $scheduleId)
         ->documents();
     foreach ($schFareDocs as $fd) {
@@ -230,7 +230,7 @@ foreach ($scheduledHistoryDocs as $doc) {
     $historyData[] = $data;
 }
 
-$ondemandHistoryDocs = $firestore->database()->collection('Bookings')
+$ondemandHistoryDocs = $firestore->collection('Bookings')
     ->where('type', '=', 'ondemand')
     ->limit(60)
     ->documents();
@@ -273,7 +273,7 @@ usort($historyData, function ($a, $b) {
 $busyDrivers = [];
 
 // Drivers currently doing On-Demand
-$activeJobs = $firestore->database()->collection('Bookings')
+$activeJobs = $firestore->collection('Bookings')
     ->where('status', 'in', ['confirmed', 'arriving', 'arrived', 'onboard'])
     ->documents();
 foreach ($activeJobs as $job) {
@@ -283,7 +283,7 @@ foreach ($activeJobs as $job) {
 }
 
 // Drivers currently doing Scheduled Routes
-$activeScheds = $firestore->database()->collection('Schedules')
+$activeScheds = $firestore->collection('Schedules')
     ->where('status', '=', 'active')
     ->documents();
 foreach ($activeScheds as $sched) {

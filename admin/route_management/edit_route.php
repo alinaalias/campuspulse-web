@@ -13,7 +13,7 @@ if (!$routeId) {
     exit();
 }
 
-$routeRef = $firestore->database()->collection('Routes')->document($routeId);
+$routeRef = $firestore->collection('Routes')->document($routeId);
 $routeSnap = $routeRef->snapshot();
 
 if (!$routeSnap->exists()) {
@@ -23,11 +23,11 @@ if (!$routeSnap->exists()) {
 $route = $routeSnap->data();
 
 $zones = [];
-foreach ($firestore->database()->collection('Zones')->where('status', '=', 'active')->documents() as $z) {
+foreach ($firestore->collection('Zones')->where('status', '=', 'active')->documents() as $z) {
     $zones[] = $z->data();
 }
 $stops = [];
-foreach ($firestore->database()->collection('Stops')->where('status', '=', 'active')->documents() as $s) {
+foreach ($firestore->collection('Stops')->where('status', '=', 'active')->documents() as $s) {
     $stops[] = $s->data();
 }
 

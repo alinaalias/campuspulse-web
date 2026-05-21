@@ -11,7 +11,7 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'driver') {
 
 $driverId = $_SESSION['user_id'];
 
-$driverSnap = $firestore->database()->collection('Staffs')->document($driverId)->snapshot();
+$driverSnap = $firestore->collection('Staffs')->document($driverId)->snapshot();
 $driverData = $driverSnap->data();
 
 $todayDate = new DateTime('today');

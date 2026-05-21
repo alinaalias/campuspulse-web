@@ -15,11 +15,11 @@ $today = date('Y-m-d');
 // 1. AUTO-ARCHIVE & MISSED LOGIC (Lazy Execution)
 // =================================================================================
 $nowTime = time();
-$batch = $firestore->database()->batch();
+$batch = $firestore->batch();
 $updatesCount = 0;
 
 // A. Archive Past Days
-$expiredQuery = $firestore->database()->collection('Schedules')->where('date', '<', $today)->limit(30)->documents();
+$expiredQuery = $firestore->collection('Schedules')->where('date', '<', $today)->limit(30)->documents();
 foreach ($expiredQuery as $doc) {
     if (($doc->data()['status'] ?? '') !== 'archived') {
         $batch->update($doc->reference(), [['path' => 'status', 'value' => 'archived']]);
@@ -28,7 +28,7 @@ foreach ($expiredQuery as $doc) {
 }
 
 // B. Mark Today's Overdue Schedules as Missed (15 Mins / 900 seconds)
-$todayQuery = $firestore->database()->collection('Schedules')->where('date', '=', $today)->documents();
+$todayQuery = $firestore->collection('Schedules')->where('date', '=', $today)->documents();
 foreach ($todayQuery as $doc) {
     $d = $doc->data();
     $status = $d['status'] ?? '';
@@ -49,20 +49,20 @@ if ($updatesCount > 0) {
 // =================================================================================
 // 2. FETCH HELPERS
 // =================================================================================
-$zones = $firestore->database()->collection('Zones')->where('status', '=', 'active')->documents();
+$zones = $firestore->collection('Zones')->where('status', '=', 'active')->documents();
 
 $driversMap = [];
-foreach ($firestore->database()->collection('Staffs')->where('role', '=', 'driver')->documents() as $d) {
+foreach ($firestore->collection('Staffs')->where('role', '=', 'driver')->documents() as $d) {
     $driversMap[$d->id()] = $d->data()['full_name'] ?? 'Unknown';
 }
 
 $routesMap = [];
-foreach ($firestore->database()->collection('Routes')->documents() as $r) {
+foreach ($firestore->collection('Routes')->documents() as $r) {
     $routesMap[$r->id()] = $r->data();
 }
 
 $stopsMap = [];
-foreach ($firestore->database()->collection('Stops')->documents() as $s) {
+foreach ($firestore->collection('Stops')->documents() as $s) {
     $stopsMap[$s->data()['stop_id']] = $s->data()['name'] ?? 'Unknown Stop';
 }
 
@@ -71,7 +71,7 @@ foreach ($firestore->database()->collection('Stops')->documents() as $s) {
 // =================================================================================
 
 // --- RAW FETCH: ACTIVE ---
-$activeQuery = $firestore->database()->collection('Schedules')
+$activeQuery = $firestore->collection('Schedules')
     ->where('date', '>=', $today)
     ->orderBy('date', 'ASC')->orderBy('departure_time', 'ASC');
 try {
@@ -81,7 +81,7 @@ try {
 }
 
 // --- RAW FETCH: HISTORY ---
-$archiveQuery = $firestore->database()->collection('Schedules')
+$archiveQuery = $firestore->collection('Schedules')
     ->where('date', '<', $today)
     ->orderBy('date', 'DESC')->orderBy('departure_time', 'ASC');
 try {

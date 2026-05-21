@@ -12,7 +12,7 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'driver') {
 $driverId = $_SESSION['user_id'];
 
 
-$driverSnap = $firestore->database()->collection('Staffs')->document($driverId)->snapshot();
+$driverSnap = $firestore->collection('Staffs')->document($driverId)->snapshot();
 $driverData = $driverSnap->data();
 
 
@@ -50,13 +50,13 @@ $shuttleStatus = 'active'; // Default to active
 
 if (!empty($shuttleId)) {
     $assignedShuttleInfo = $shuttleId;
-    $shuttleSnap = $firestore->database()->collection('Shuttles')->document($shuttleId)->snapshot();
+    $shuttleSnap = $firestore->collection('Shuttles')->document($shuttleId)->snapshot();
     if ($shuttleSnap->exists()) {
         $sData = $shuttleSnap->data();
         $shuttleStatus = $sData['status'] ?? 'active'; // Fetch actual status
         $zoneId = $sData['zone_id'] ?? '';
         if (!empty($zoneId)) {
-            $zoneSnap = $firestore->database()->collection('Zones')->document($zoneId)->snapshot();
+            $zoneSnap = $firestore->collection('Zones')->document($zoneId)->snapshot();
             if ($zoneSnap->exists()) {
                 $assignedZoneInfo = $zoneSnap->data()['name'] ?? $zoneId;
             }
@@ -74,7 +74,7 @@ $onDemandJob = null;
 $odType = 'none';
 
 if ($isOnline) {
-    $activeQuery = $firestore->database()->collection('Bookings')
+    $activeQuery = $firestore->collection('Bookings')
         ->where('driver_id', '=', $driverId)
         ->where('type', '=', 'ondemand')
         ->where('status', 'in', ['confirmed', 'arriving', 'onboard'])
@@ -88,8 +88,8 @@ if ($isOnline) {
         $pId = $onDemandJob['pickup_stop_id'] ?? '';
         $dId = $onDemandJob['dropoff_stop_id'] ?? '';
 
-        $pSnap = $firestore->database()->collection('Stops')->document($pId)->snapshot();
-        $dSnap = $firestore->database()->collection('Stops')->document($dId)->snapshot();
+        $pSnap = $firestore->collection('Stops')->document($pId)->snapshot();
+        $dSnap = $firestore->collection('Stops')->document($dId)->snapshot();
 
         $onDemandJob['pickup_location'] = $pSnap->exists() ? ($pSnap->data()['name'] ?? $pId) : 'Current Location';
         $onDemandJob['destination_name'] = $dSnap->exists() ? ($dSnap->data()['name'] ?? $dId) : 'Destination';
@@ -111,7 +111,7 @@ $tomorrow = date('Y-m-d', strtotime('+1 day'));
 $currentTime = date('H:i');
 $currentTimestamp = time();
 
-$schedules = $firestore->database()->collection('Schedules')
+$schedules = $firestore->collection('Schedules')
     ->where('driver_id', '=', $driverId)
     ->where('date', '>=', $today)
     ->orderBy('date', 'ASC')
@@ -139,7 +139,7 @@ foreach ($schedules as $s) {
 }
 
 if ($scheduledJob) {
-    $rSnap = $firestore->database()->collection('Routes')->document($scheduledJob['route_id'])->snapshot();
+    $rSnap = $firestore->collection('Routes')->document($scheduledJob['route_id'])->snapshot();
     $scheduledJob['route_name'] = $rSnap->exists() ? $rSnap->data()['route_name'] : $scheduledJob['route_id'];
 
     $etas = $scheduledJob['etas'] ?? [];
@@ -155,7 +155,7 @@ if ($scheduledJob) {
     }
 
     if (!empty($destId)) {
-        $destSnap = $firestore->database()->collection('Stops')->document($destId)->snapshot();
+        $destSnap = $firestore->collection('Stops')->document($destId)->snapshot();
         $dData = $destSnap->exists() ? $destSnap->data() : [];
         $destName = $dData['stop_name'] ?? $dData['name'] ?? $destId;
 
@@ -195,7 +195,7 @@ $newAlertsCount = 0;
 // Get the timestamp of when the driver last opened the alerts page
 $lastReadTime = $driverData['last_alert_read_time'] ?? 0;
 
-$alertsQuery = $firestore->database()->collection('Announcements')
+$alertsQuery = $firestore->collection('Announcements')
     ->where('status', 'in', ['active', 'scheduled'])
     ->documents();
 
@@ -223,7 +223,7 @@ foreach ($alertsQuery as $doc) {
 }
 
 // Check personal unread notifications
-$notificationsQuery = $firestore->database()->collection('Notifications')
+$notificationsQuery = $firestore->collection('Notifications')
     ->where('user_id', '=', $driverId)
     ->where('is_read', '=', false)
     ->documents();

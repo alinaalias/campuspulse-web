@@ -13,7 +13,7 @@ if (!$id) {
     exit();
 }
 
-$ref = $firestore->database()->collection('Zones')->document($id);
+$ref = $firestore->collection('Zones')->document($id);
 $snap = $ref->snapshot();
 
 if (!$snap->exists()) {

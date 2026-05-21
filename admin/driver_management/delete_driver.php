@@ -8,7 +8,7 @@ if (!$id) {
     exit();
 }
 
-$driverRef = $firestore->database()->collection('Staffs')->document($id);
+$driverRef = $firestore->collection('Staffs')->document($id);
 $snapshot = $driverRef->snapshot();
 
 if (!$snapshot->exists()) {

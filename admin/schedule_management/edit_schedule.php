@@ -14,7 +14,7 @@ if (!$id) {
     exit();
 }
 
-$ref = $firestore->database()->collection('Schedules')->document($id);
+$ref = $firestore->collection('Schedules')->document($id);
 $snap = $ref->snapshot();
 if (!$snap->exists()) {
     header('Location: schedules_management.php?msg=notfound');
@@ -22,7 +22,7 @@ if (!$snap->exists()) {
 }
 $schedule = $snap->data();
 
-$routeSnap = $firestore->database()->collection('Routes')->document($schedule['route_id'])->snapshot();
+$routeSnap = $firestore->collection('Routes')->document($schedule['route_id'])->snapshot();
 if (!$routeSnap->exists()) {
     header('Location: schedules_management.php?msg=route_missing');
     exit();
@@ -31,13 +31,13 @@ $route = $routeSnap->data();
 
 // FETCH ACTIVE SHUTTLES
 $shuttles = [];
-foreach ($firestore->database()->collection('Shuttles')->where('status', '=', 'active')->documents() as $s) {
+foreach ($firestore->collection('Shuttles')->where('status', '=', 'active')->documents() as $s) {
     $shuttles[] = $s->id();
 }
 
 // FETCH ACTIVE DRIVERS
 $drivers = [];
-foreach ($firestore->database()->collection('Staffs')->where('role', '=', 'driver')->where('status', '=', 'active')->documents() as $d) {
+foreach ($firestore->collection('Staffs')->where('role', '=', 'driver')->where('status', '=', 'active')->documents() as $d) {
     $drivers[$d->id()] = $d->data()['full_name'] ?? $d->id();
 }
 

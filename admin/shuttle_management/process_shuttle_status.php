@@ -29,7 +29,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         try {
-            $firestore->database()->collection('Shuttles')->document($shuttleId)->set($updateData, ['merge' => true]);
+            $firestore->collection('Shuttles')->document($shuttleId)->set($updateData, ['merge' => true]);
 
             // Redirect with specific success message
             header('Location: shuttles_management.php?msg=updated');

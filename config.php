@@ -77,9 +77,8 @@ $bucket = $storage->bucket($bucketName);
 */
 function generateCustomId($type, $prefix, $firestore)
 {
-    $counterRef = $firestore->database()
-        ->collection('Counters')
-        ->document($type);
+    // REMOVED ->database() here
+    $counterRef = $firestore->collection('Counters')->document($type);
 
     $snapshot = $counterRef->snapshot();
 

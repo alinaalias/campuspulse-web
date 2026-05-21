@@ -8,7 +8,7 @@ $shuttleId = null;
 // 1. GATEKEEPER: Fetch Driver State Before Logout
 if (isset($_SESSION['user_id']) && ($_SESSION['role'] ?? '') === 'driver') {
     try {
-        $driverSnap = $firestore->database()->collection('Staffs')->document($_SESSION['user_id'])->snapshot();
+        $driverSnap = $firestore->collection('Staffs')->document($_SESSION['user_id'])->snapshot();
         if ($driverSnap->exists()) {
             $driverData = $driverSnap->data();
             $shuttleId = $driverData['assigned_shuttle_id'] ?? null;
@@ -27,14 +27,14 @@ if (isset($_GET['confirm']) && $_GET['confirm'] === '1' && !$hasActiveTrip) {
     if (isset($_SESSION['user_id'])) {
         try {
             // Update Driver to Offline
-            $firestore->database()->collection('Staffs')->document($_SESSION['user_id'])->update([
+            $firestore->collection('Staffs')->document($_SESSION['user_id'])->update([
                 ['path' => 'duty_status', 'value' => 'offline'],
                 ['path' => 'current_trip_id', 'value' => null]
             ]);
 
             // LOOPHOLE FIX: Force the Assigned Shuttle to Offline
             if (!empty($shuttleId)) {
-                $firestore->database()->collection('Shuttles')->document($shuttleId)->update([
+                $firestore->collection('Shuttles')->document($shuttleId)->update([
                     ['path' => 'is_online', 'value' => false]
                 ]);
             }

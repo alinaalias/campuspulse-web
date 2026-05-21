@@ -8,7 +8,7 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
 }
 
 $adminId = $_SESSION['user_id'];
-$docRef = $firestore->database()->collection('Staffs')->document($adminId);
+$docRef = $firestore->collection('Staffs')->document($adminId);
 $snapshot = $docRef->snapshot();
 
 if (!$snapshot->exists())

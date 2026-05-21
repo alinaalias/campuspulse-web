@@ -25,7 +25,7 @@ if (!in_array($targetStatus, $validStatuses)) {
     exit();
 }
 
-$docRef = $firestore->database()->collection('Staffs')->document($id);
+$docRef = $firestore->collection('Staffs')->document($id);
 
 // --- NEW: BACKEND COMPLIANCE LOCK ---
 if ($targetStatus === 'active') {

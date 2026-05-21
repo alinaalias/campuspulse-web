@@ -71,7 +71,7 @@ $activeAnnouncements = array_slice($activeAnnouncements, 0, 8);
 // ==========================================
 $liveShuttleCount = 0;
 try {
-    $shuttlesRef = $firestore->database()->collection('Shuttles')
+    $shuttlesRef = $firestore->collection('Shuttles')
         ->where('status', '=', 'active')
         ->where('is_online', '=', true)
         ->documents();

@@ -8,7 +8,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = trim($_POST['email']);
     $password = $_POST['password'];
 
-    $staffRef = $firestore->database()->collection('Staffs');
+    $staffRef = $firestore->collection('Staffs');
     $query = $staffRef->where('email', '=', $email);
     $snapshot = $query->documents();
 
@@ -31,7 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ($user['role'] === 'driver') {
                 try {
-                    $firestore->database()->collection('Staffs')->document($_SESSION['user_id'])->update([
+                    $firestore->collection('Staffs')->document($_SESSION['user_id'])->update([
                         ['path' => 'duty_status', 'value' => 'offline'],
                         ['path' => 'current_trip_id', 'value' => null]
                     ]);

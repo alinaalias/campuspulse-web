@@ -13,7 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         try {
             // Check if the email exists in the Staffs collection
-            $staffRef = $firestore->database()->collection('Staffs');
+            $staffRef = $firestore->collection('Staffs');
             $query = $staffRef->where('email', '=', $email);
             $snapshot = $query->documents();
 

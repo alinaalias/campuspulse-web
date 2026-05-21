@@ -9,18 +9,18 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
 
 /* ====================== FETCH DATA ====================== */
 $zones = [];
-$zonesSnap = $firestore->database()->collection('Zones')->documents();
+$zonesSnap = $firestore->collection('Zones')->documents();
 foreach ($zonesSnap as $z) {
     $zones[$z->id()] = $z->data();
 }
 
 $stops = [];
-$stopsSnap = $firestore->database()->collection('Stops')->documents();
+$stopsSnap = $firestore->collection('Stops')->documents();
 foreach ($stopsSnap as $s) {
     $stops[$s->id()] = $s->data();
 }
 
-$routesSnap = $firestore->database()->collection('Routes')->documents();
+$routesSnap = $firestore->collection('Routes')->documents();
 
 $pageTitle = "Routes Management - CampusPulse";
 $depth = '../../';

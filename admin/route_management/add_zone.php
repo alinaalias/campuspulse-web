@@ -15,7 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         try {
             $zoneId = generateCustomId('zones', 'ZONE', $firestore);
-            $firestore->database()->collection('Zones')->document($zoneId)->set([
+            $firestore->collection('Zones')->document($zoneId)->set([
                 'zone_id' => $zoneId,
                 'name' => $name,
                 'description' => $description,

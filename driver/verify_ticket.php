@@ -23,7 +23,7 @@ if (!$bookingId || !$scheduleId) {
 
 try {
     // 2. Fetch the Booking Document
-    $bookingRef = $firestore->database()->collection('Bookings')->document($bookingId);
+    $bookingRef = $firestore->collection('Bookings')->document($bookingId);
     $bookingSnap = $bookingRef->snapshot();
 
     if (!$bookingSnap->exists()) {
@@ -66,7 +66,7 @@ try {
         ], ['merge' => true]);
 
         // Update Schedule Count (Decrement)
-        $schedRef = $firestore->database()->collection('Schedules')->document($scheduleId);
+        $schedRef = $firestore->collection('Schedules')->document($scheduleId);
         $schedSnap = $schedRef->snapshot();
         $newOnboardCount = 0;
         if ($schedSnap->exists()) {
@@ -80,7 +80,7 @@ try {
         $studentName = "Student";
         $studentId = $booking['user_id'] ?? ($booking['student_id'] ?? '');
         if (!empty($studentId)) {
-            $stSnap = $firestore->database()->collection('Students')->document($studentId)->snapshot();
+            $stSnap = $firestore->collection('Students')->document($studentId)->snapshot();
             if ($stSnap->exists()) {
                 $stData = $stSnap->data();
                 $studentName = $stData['full_name'] ?? ($stData['name'] ?? "Student");
@@ -116,7 +116,7 @@ try {
     ], ['merge' => true]);
 
     // Update Schedule Count
-    $schedRef = $firestore->database()->collection('Schedules')->document($scheduleId);
+    $schedRef = $firestore->collection('Schedules')->document($scheduleId);
     $schedSnap = $schedRef->snapshot();
 
     $newOnboardCount = 1;
@@ -136,7 +136,7 @@ try {
     $studentId = $booking['user_id'] ?? ($booking['student_id'] ?? '');
 
     if (!empty($studentId)) {
-        $stSnap = $firestore->database()->collection('Students')->document($studentId)->snapshot();
+        $stSnap = $firestore->collection('Students')->document($studentId)->snapshot();
         if ($stSnap->exists()) {
             $stData = $stSnap->data();
             // Try 'full_name', then 'name', then fallback to "Student"

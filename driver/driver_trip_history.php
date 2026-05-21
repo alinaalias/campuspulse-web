@@ -18,7 +18,7 @@ $now = time();
 $bufferSeconds = 900; // 15-minute buffer
 
 
-$schedQuery = $firestore->database()->collection('Schedules')
+$schedQuery = $firestore->collection('Schedules')
     ->where('driver_id', '=', $driverId)
     ->documents();
 
@@ -49,7 +49,7 @@ foreach ($schedQuery as $doc) {
 
         $route = "Scheduled Trip";
         if (!empty($d['route_id'])) {
-            $rSnap = $firestore->database()->collection('Routes')->document($d['route_id'])->snapshot();
+            $rSnap = $firestore->collection('Routes')->document($d['route_id'])->snapshot();
             if ($rSnap->exists())
                 $route = $rSnap->data()['route_name'];
         }
@@ -80,7 +80,7 @@ foreach ($schedQuery as $doc) {
 }
 
 
-$odQuery = $firestore->database()->collection('Bookings')
+$odQuery = $firestore->collection('Bookings')
     ->where('driver_id', '=', $driverId)
     ->documents();
 

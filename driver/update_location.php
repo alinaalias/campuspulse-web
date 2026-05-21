@@ -7,7 +7,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
     // 1. Update Schedule (If this is a fixed route)
     if (!empty($_POST['schedule_id'])) {
-        $firestore->database()->collection('Schedules')->document($_POST['schedule_id'])->set([
+        $firestore->collection('Schedules')->document($_POST['schedule_id'])->set([
             'current_lat' => $lat,
             'current_lng' => $lng,
             'last_updated' => new DateTime()
@@ -16,7 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
     // 2. Update Shuttle (This is what the Live Operations map uses!)
     if (!empty($_POST['shuttle_id'])) {
-        $firestore->database()->collection('Shuttles')->document($_POST['shuttle_id'])->set([
+        $firestore->collection('Shuttles')->document($_POST['shuttle_id'])->set([
             'current_lat' => $lat,
             'current_lng' => $lng,
             'is_online' => true,
