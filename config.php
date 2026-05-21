@@ -16,7 +16,7 @@ define('FIREBASE_APP_ID', $_ENV['FIREBASE_APP_ID'] ?? '');
 use Kreait\Firebase\Factory;
 use Google\Cloud\Storage\StorageClient;
 
-$serviceAccountPath = __DIR__ . '/service-account.json';
+$serviceAccountPath = '/etc/secrets/service-account.json';
 
 if (!file_exists($serviceAccountPath)) {
     die("Error: Key file not found at: " . $serviceAccountPath);
