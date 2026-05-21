@@ -1,37 +1,24 @@
-# Use a lightweight Ubuntu 22.04 base
-FROM ubuntu:22.04
+# 1. Use the official, stable PHP 8.2 Apache image
+FROM php:8.2-apache
 
-# Stop Ubuntu from asking for timezone input during the build
-ENV DEBIAN_FRONTEND=noninteractive
+# 2. Download the magical PHP Extension Installer script
+ADD https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/
 
-# Install Apache, PHP 8.1 (default for 22.04), and the pre-compiled gRPC extension
-RUN apt-get update && apt-get install -y \
-    apache2 \
-    php \
-    libapache2-mod-php \
-    php-grpc \
-    php-protobuf \
-    php-curl \
-    php-mbstring \
-    php-xml \
-    php-zip \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# 3. Make it executable and install the heavy extensions in seconds (No compiling!)
+RUN chmod +x /usr/local/bin/install-php-extensions && \
+    install-php-extensions grpc protobuf zip
 
-# Enable Apache mod_rewrite and allow .htaccess files to work
-RUN a2enmod rewrite \
-    && sed -i 's/AllowOverride None/AllowOverride All/g' /etc/apache2/apache2.conf
+# 4. Enable Apache mod_rewrite (Essential for routing)
+RUN a2enmod rewrite
 
-# Set the working directory
+# 5. Set the working directory
 WORKDIR /var/www/html
 
-# Copy your project files (and your locally built vendor folder!)
+# 6. Copy your project files AND your pre-built vendor folder
 COPY . .
 
-# Set strict permissions for Apache web server security
+# 7. Secure file permissions for Apache
 RUN chown -R www-data:www-data /var/www/html
 
-# Start Apache in the foreground
-CMD ["apache2ctl", "-D", "FOREGROUND"]
-
+# 8. Expose standard web port
 EXPOSE 80
