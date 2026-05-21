@@ -2,7 +2,6 @@
 .gitignore
 node_modules/
 .env
-config.php
 service-account.json
 *.log
 *.tmp
