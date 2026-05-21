@@ -1,6 +1,5 @@
 .git
 .gitignore
-vendor/
 node_modules/
 .env
 config.php
