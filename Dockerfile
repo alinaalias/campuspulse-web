@@ -1,24 +1,26 @@
-# 1. Use the official, stable PHP 8.2 Apache image
 FROM php:8.2-apache
 
-# 2. Download the magical PHP Extension Installer script
+# 1. Install only the system-level OS packages (No composer, no build-tools)
+RUN apt-get update && apt-get install -y \
+    libzip-dev \
+    zip \
+    unzip \
+    && docker-php-ext-install zip
+
+# 2. Use the light installer ONLY for the critical system extensions
 ADD https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/
-
-# 3. Make it executable and install the heavy extensions in seconds (No compiling!)
 RUN chmod +x /usr/local/bin/install-php-extensions && \
-    install-php-extensions grpc protobuf zip
+    install-php-extensions grpc protobuf
 
-# 4. Enable Apache mod_rewrite (Essential for routing)
-RUN a2enmod rewrite
+# 3. Setup Apache
+RUN a2enmod rewrite && sed -i 's/AllowOverride None/AllowOverride All/g' /etc/apache2/apache2.conf
 
-# 5. Set the working directory
 WORKDIR /var/www/html
 
-# 6. Copy your project files AND your pre-built vendor folder
+# 4. Copy everything (This now includes your pre-built vendor/ folder!)
 COPY . .
 
-# 7. Secure file permissions for Apache
+# 5. Fix permissions
 RUN chown -R www-data:www-data /var/www/html
 
-# 8. Expose standard web port
 EXPOSE 80
