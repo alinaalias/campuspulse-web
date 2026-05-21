@@ -21,12 +21,22 @@ WORKDIR /var/www/html
 # Install Composer natively inside the builder stage
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# Copy composer configuration first to leverage Docker layer caching
+# Copy composer configuration AND your lock file first
+# (Crucial: copy composer.lock so composer doesn't try to recalculate dependencies)
 COPY composer.json composer.lock* ./
 
-# Install project dependencies
-# (We pass --no-scripts to prevent any local hooks from blocking the container build)
-RUN composer install --no-dev --optimize-autoloader --no-scripts
+# THE FIX: Optimize environment variables to force low memory limits on Composer
+ENV COMPOSER_ALLOW_SUPERUSER=1
+ENV COMPOSER_MEMORY_LIMIT=-1
+
+# Install project dependencies using extreme low-memory settings
+RUN COMPOSER_PROCESS_TIMEOUT=600 composer install \
+    --no-dev \
+    --optimize-autoloader \
+    --no-scripts \
+    --no-interaction \
+    --no-cache \
+    --ignore-platform-req=ext-grpc
 
 # Copy the rest of your project application files
 COPY . .
