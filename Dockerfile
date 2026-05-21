@@ -1,25 +1,40 @@
-# Use an official PHP Apache image
-FROM php:8.2-apache
+# Use a lightweight Ubuntu base instead of the official PHP source-compilation image
+FROM ubuntu:22.04
 
-# Install basic runtime extensions (No heavy build tools or PECL compilers)
-RUN apt-get update && apt-get install -y \
-    libzip-dev \
-    zip \
-    unzip \
-    libcurl4-openssl-dev \
-    && docker-php-ext-install zip curl
+# Stop Ubuntu from asking for timezone input during the build
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Enable Apache mod_rewrite
-RUN a2enmod rewrite
+# 1. Add the official PHP repository and install pre-compiled extensions
+RUN apt-get update && apt-get install -y software-properties-common \
+    && add-apt-repository ppa:ondrej/php -y \
+    && apt-get update && apt-get install -y \
+    apache2 \
+    libapache2-mod-php8.2 \
+    php8.2 \
+    php8.2-grpc \
+    php8.2-protobuf \
+    php8.2-curl \
+    php8.2-mbstring \
+    php8.2-xml \
+    php8.2-zip \
+    php8.2-sodium \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory to the standard Apache folder
+# 2. Enable Apache mod_rewrite and allow .htaccess files to work
+RUN a2enmod rewrite \
+    && sed -i 's/AllowOverride None/AllowOverride All/g' /etc/apache2/apache2.conf
+
+# 3. Set the working directory
 WORKDIR /var/www/html
 
-# Copy everything directly (including your pre-built local vendor folder!)
+# 4. Copy your project files (and your locally built vendor folder!)
 COPY . .
 
-# Set strict permissions for Apache web server security
+# 5. Set strict permissions for Apache web server security
 RUN chown -R www-data:www-data /var/www/html
 
-# Expose standard web port
+# 6. Start Apache in the foreground
+CMD ["apache2ctl", "-D", "FOREGROUND"]
+
 EXPOSE 80
