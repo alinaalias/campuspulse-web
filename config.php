@@ -5,22 +5,16 @@ require __DIR__ . '/vendor/autoload.php';
 use Dotenv\Dotenv;
 use Kreait\Firebase\Factory;
 use Google\Cloud\Storage\StorageClient;
+use Google\Cloud\Firestore\FirestoreClient; // Added to bypass Kreait's strict wrapper
 
 /*
 |--------------------------------------------------------------------------
 | ENV LOADER
 |--------------------------------------------------------------------------
-| Loads local .env for development.
-| On Render, ENV variables are injected automatically.
 */
 $dotenv = Dotenv::createImmutable(__DIR__);
-$dotenv->safeload();
+$dotenv->safeLoad();
 
-/*
-|--------------------------------------------------------------------------
-| APP CONFIG (ENV VARIABLES)
-|--------------------------------------------------------------------------
-*/
 define('MAPS_API_KEY', $_ENV['GOOGLE_MAPS_API_KEY'] ?? '');
 define('FIREBASE_AUTH_DOMAIN', $_ENV['FIREBASE_AUTH_DOMAIN'] ?? '');
 define('FIREBASE_PROJECT_ID', $_ENV['FIREBASE_PROJECT_ID'] ?? '');
@@ -30,17 +24,24 @@ define('FIREBASE_APP_ID', $_ENV['FIREBASE_APP_ID'] ?? '');
 
 /*
 |--------------------------------------------------------------------------
-| FIREBASE SERVICE ACCOUNT (IMPORTANT FIX)
+| FIREBASE SERVICE ACCOUNT (LOCALHOST + RENDER SUPPORT)
 |--------------------------------------------------------------------------
-| Stored as JSON string in Render ENV:
-| FIREBASE_SERVICE_ACCOUNT
 */
-$serviceAccount = json_decode($_ENV['FIREBASE_SERVICE_ACCOUNT'] ?? '', true);
+$serviceAccount = null;
+
+// 1. Try to read from Render's Environment Variable first
+if (!empty($_ENV['FIREBASE_SERVICE_ACCOUNT'])) {
+    $serviceAccount = json_decode($_ENV['FIREBASE_SERVICE_ACCOUNT'], true);
+} 
+// 2. If running locally on XAMPP, fall back to the physical file
+elseif (file_exists(__DIR__ . '/service-account.json')) {
+    $serviceAccount = json_decode(file_get_contents(__DIR__ . '/service-account.json'), true);
+}
 
 if (!$serviceAccount) {
     error_log("Firebase service account is missing or invalid.");
     http_response_code(500);
-    exit("Server configuration error.");
+    exit("Server configuration error: Missing Service Account JSON.");
 }
 
 /*
@@ -48,11 +49,16 @@ if (!$serviceAccount) {
 | FIREBASE INITIALIZATION
 |--------------------------------------------------------------------------
 */
-$factory = (new Factory)
-    ->withServiceAccount($serviceAccount);
+$factory = (new Factory)->withServiceAccount($serviceAccount);
 
-$firestore = $factory->createFirestore();
 $messaging = $factory->createMessaging();
+
+// THE MAGIC BYPASS: We instantiate Firestore manually to force REST mode
+$firestore = new FirestoreClient([
+    'projectId' => $serviceAccount['project_id'] ?? ($_ENV['FIREBASE_PROJECT_ID'] ?? ''),
+    'keyFile'   => $serviceAccount,
+    'transport' => 'rest' // <--- This permanently disables the gRPC C++ requirement!
+]);
 
 /*
 |--------------------------------------------------------------------------
