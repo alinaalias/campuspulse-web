@@ -2,6 +2,9 @@
     "require": {
         "kreait/firebase-php": "^7.0",
         "vlucas/phpdotenv": "^5.6",
-        "phpmailer/phpmailer": "^7.0"
+        "phpmailer/phpmailer": "^7.0",
+        "google/cloud-firestore": "^2.1",
+        "google/cloud-storage": "^1.51",
+        "google/cloud-core": "^1.72"
     }
 }
