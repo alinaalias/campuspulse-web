@@ -1,12 +1,12 @@
 FROM php:8.2-apache
 
-# 1. Install only basic zip and curl (Takes 5 seconds)
+# 1. Install basic zip, curl, and the missing bcmath extension
 RUN apt-get update && apt-get install -y \
     libzip-dev \
     zip \
     unzip \
     libcurl4-openssl-dev \
-    && docker-php-ext-install zip curl \
+    && docker-php-ext-install zip curl bcmath \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # 2. Setup Apache routing
