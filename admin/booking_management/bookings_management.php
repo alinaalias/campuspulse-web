@@ -13,7 +13,7 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
 $todayStr = date('Y-m-d');
 $now = time();
 
-$batch = $firestore->batch();
+$batch = $firestore->bulkWriter();
 $updatesCount = 0;
 
 // === LAZY EXECUTION 1: AUTO-ARCHIVE 15-MIN OVERDUE SCHEDULES ===
@@ -51,7 +51,7 @@ foreach ($pendingBookings as $doc) {
 }
 
 if ($updatesCount > 0) {
-    $batch->commit();
+    $batch->flush();
 }
 // ==============================================================
 

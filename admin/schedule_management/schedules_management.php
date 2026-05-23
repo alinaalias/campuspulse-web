@@ -15,7 +15,7 @@ $today = date('Y-m-d');
 // 1. AUTO-ARCHIVE & MISSED LOGIC (Lazy Execution)
 // =================================================================================
 $nowTime = time();
-$batch = $firestore->batch();
+$batch = $firestore->bulkWriter();
 $updatesCount = 0;
 
 // A. Archive Past Days
@@ -43,7 +43,7 @@ foreach ($todayQuery as $doc) {
 }
 
 if ($updatesCount > 0) {
-    $batch->commit();
+    $batch->flush();
 }
 
 // =================================================================================

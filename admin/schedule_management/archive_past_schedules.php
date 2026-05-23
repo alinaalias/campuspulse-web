@@ -16,7 +16,7 @@ try {
         ->documents();
 
     $count = 0;
-    $batch = $firestore->batch();
+    $batch = $firestore->bulkWriter();
     $batchCount = 0;
 
     foreach ($pastSchedules as $doc) {
@@ -29,14 +29,14 @@ try {
         $batchCount++;
 
         if ($batchCount >= 400) {
-            $batch->commit();
-            $batch = $firestore->batch();
+            $batch->flush();
+            $batch = $firestore->bulkWriter();
             $batchCount = 0;
         }
     }
 
     if ($batchCount > 0) {
-        $batch->commit();
+        $batch->flush();
     }
 
     $msg = "Success! Archived $count past schedules. History is safe.";
