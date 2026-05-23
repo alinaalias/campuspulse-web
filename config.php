@@ -1,5 +1,5 @@
 <?php
-
+date_default_timezone_set('Asia/Kuala_Lumpur');
 require __DIR__ . '/vendor/autoload.php';
 
 use Dotenv\Dotenv;
@@ -77,7 +77,6 @@ $bucket = $storage->bucket($bucketName);
 */
 function generateCustomId($type, $prefix, $firestore)
 {
-    // REMOVED ->database() here
     $counterRef = $firestore->collection('Counters')->document($type);
 
     $snapshot = $counterRef->snapshot();
