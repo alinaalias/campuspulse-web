@@ -1033,14 +1033,41 @@ include $depth . 'layout/admin/header.php';
                                 <div style="font-size:0.77rem; color:#94a3b8; margin-top:2px;"><i class="fas fa-bus" style="margin-right:4px;"></i>
                                     <?= htmlspecialchars($row['shuttle_id'] ?? 'N/A') ?></div>
                             </td>
-                            <td><span class="badge <?= $badgeClass ?>"><?= ucfirst($status) ?></span></td>
+                            <td>
+                                <?php
+                                    $statusIcon = 'fa-info-circle';
+                                    $statusTooltip = '';
+                                    
+                                    switch(strtolower($status)) {
+                                        case 'completed':
+                                            $statusIcon = 'fa-check-circle';
+                                            $statusTooltip = 'Success: Trip was fully executed.';
+                                            break;
+                                        case 'cancelled':
+                                            $statusIcon = 'fa-times-circle';
+                                            $statusTooltip = 'Aborted: Manually stopped by a user or admin.';
+                                            break;
+                                        case 'missed':
+                                            $statusIcon = 'fa-clock';
+                                            $statusTooltip = 'System Failed: Time expired before a driver could execute it.';
+                                            break;
+                                        case 'archived':
+                                            $statusIcon = 'fa-archive';
+                                            $statusTooltip = 'Cleaned Up: Old record retained for database history.';
+                                            break;
+                                    }
+                                ?>
+                                <span class="badge <?= $badgeClass ?>" title="<?= $statusTooltip ?>" style="cursor: help; display: inline-flex; align-items: center; gap: 4px;">
+                                    <i class="fas <?= $statusIcon ?>"></i> <?= ucfirst($status) ?>
+                                </span>
+                            </td>
                             <td style="white-space:nowrap;">
                                 <div style="font-weight:700; color:#0f172a; font-size:0.9rem;"><?= $fareDisplay ?></div>
                                 <div style="font-size:0.8rem; margin-top:4px;"><?= $ratingHtml ?></div>
                             </td>
                             <td>
                                 <button class="btn-logs interaction-target" onclick="openLogsModal(<?= $tripDataJson ?>)">
-                                    <i class="fas fa-file-alt"></i> View Details
+                                    <i class="fas fa-file-alt"></i> View Trip Logs
                                 </button>
                             </td>
                         </tr>
@@ -1112,12 +1139,21 @@ include $depth . 'layout/admin/header.php';
     function openLogsModal(tripData) {
         currentTripData = tripData;
         const logsData = tripData.trip_logs || [];
-
         const timeline = document.getElementById('logsTimeline');
         timeline.innerHTML = '';
 
+        // NEW: Display Cancellation Reason if it exists
+        if ((tripData.status === 'cancelled' || tripData.status === 'Cancelled') && tripData.cancellation_reason) {
+            timeline.innerHTML += `
+                <div style="background-color: #fef2f2; color: #b91c1c; padding: 12px 16px; border-radius: 8px; border: 1px solid #fca5a5; margin-bottom: 20px; font-size: 0.9rem;">
+                    <strong><i class="fas fa-exclamation-triangle" style="margin-right: 6px;"></i>Cancellation Reason:</strong><br>
+                    <span style="margin-top:4px; display:block;">${tripData.cancellation_reason}</span>
+                </div>
+            `;
+        }
+
         if (logsData.length === 0) {
-            timeline.innerHTML = '<p style="text-align:center; color:#94a3b8; padding:30px;">No timeline logs recorded for this trip.</p>';
+            timeline.innerHTML += '<p style="text-align:center; color:#94a3b8; padding:30px;">No timeline logs recorded for this trip.</p>';
         } else {
             logsData.forEach(log => {
                 const rawTs = log.timestamp || log.time || null;
@@ -1300,7 +1336,7 @@ include $depth . 'layout/admin/header.php';
     document.getElementById('filterType').addEventListener('change', applyFilters);
     document.getElementById('filterStatus').addEventListener('change', applyFilters);
 
-    // ── Global Auto-Refresh (30s) ──
+    // ── Global Auto-Refresh (30s) & State Preservation ──
     let isInteracting = false;
     document.querySelectorAll('input, select, button, form, .interaction-target, .modal-overlay, .modal-content').forEach(el => {
         el.addEventListener('focus', () => isInteracting = true);
@@ -1310,15 +1346,42 @@ include $depth . 'layout/admin/header.php';
         el.addEventListener('change', () => isInteracting = true);
     });
 
+    // Save state exactly before the browser refreshes
+    window.addEventListener('beforeunload', () => {
+        sessionStorage.setItem('cp_scrollPos', window.scrollY);
+        sessionStorage.setItem('cp_search', document.getElementById('globalSearch').value);
+        sessionStorage.setItem('cp_type', document.getElementById('filterType').value);
+        sessionStorage.setItem('cp_status', document.getElementById('filterStatus').value);
+    });
+
     setInterval(() => {
         const anyModalOpen = Array.from(document.querySelectorAll('.modal-overlay')).some(m => m.style.display === 'flex');
-        if (!isInteracting && !anyModalOpen) window.location.reload();
+        if (!isInteracting && !anyModalOpen) {
+            window.location.reload();
+        }
     }, 30000);
 
-    // ── Init ──
+    // ── Init (Restore State) ──
     document.addEventListener('DOMContentLoaded', () => {
         visibleRows = historyRows;
-        showPage(1);
+        
+        // Restore Filters
+        const savedSearch = sessionStorage.getItem('cp_search');
+        if (savedSearch !== null) document.getElementById('globalSearch').value = savedSearch;
+
+        const savedType = sessionStorage.getItem('cp_type');
+        if (savedType !== null) document.getElementById('filterType').value = savedType;
+
+        const savedStatus = sessionStorage.getItem('cp_status');
+        if (savedStatus !== null) document.getElementById('filterStatus').value = savedStatus;
+
+        applyFilters(); // Apply the restored filters to the tables
+
+        // Restore Scroll Position seamlessly
+        const scrollPos = sessionStorage.getItem('cp_scrollPos');
+        if (scrollPos) {
+            window.scrollTo(0, parseInt(scrollPos));
+        }
 
         const savedTab = localStorage.getItem('adminDispatchActiveTab');
         if (savedTab && document.getElementById(savedTab)) {

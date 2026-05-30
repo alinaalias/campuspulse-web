@@ -517,6 +517,10 @@ include $depth . 'layout/admin/header.php';
             streetViewControl: false
         });
         infoWindow = new google.maps.InfoWindow();
+        infoWindow.addListener('closeclick', () => {
+        sessionStorage.removeItem('activeInfoWindowShuttleId');
+        activeInfoWindowShuttleId = null;
+    });
 
         const zonePoints = {};
         stopsData.forEach(stop => {
@@ -797,156 +801,118 @@ include $depth . 'layout/admin/header.php';
 
     function savePageState() {
         const state = {
-
             selectedShuttle: document.getElementById('shuttleSearch')?.value || '',
-
-            activeInfoWindowShuttleId: activeInfoWindowShuttleId,
-
-
-            toggleStops: document.getElementById('toggleStops')?.checked || false,
-            toggleZones: document.getElementById('toggleZones')?.checked || false,
-            toggleActiveOnly: document.getElementById('toggleActiveOnly')?.checked || false,
-            toggleLogCb: document.getElementById('toggleLogCb')?.checked || false,
-
+            toggleStops: document.getElementById('toggleStops')?.checked ?? true,
+            toggleZones: document.getElementById('toggleZones')?.checked ?? true,
+            toggleActiveOnly: document.getElementById('toggleActiveOnly')?.checked ?? false,
+            toggleLogCb: document.getElementById('toggleLogCb')?.checked ?? true,
             sidebarCollapsed: document.getElementById('sidebarWrapper')?.classList.contains('collapsed') || false,
-
-            mapCenter: map ? {
-                lat: map.getCenter().lat(),
-                lng: map.getCenter().lng()
-            } : null,
-
+            layerControlsOpen: document.getElementById('layerControlsContent')?.style.display === 'block',
+            mapCenter: map ? { lat: map.getCenter().lat(), lng: map.getCenter().lng() } : null,
             mapZoom: map ? map.getZoom() : 15
         };
-
         sessionStorage.setItem('liveOpsPageState', JSON.stringify(state));
     }
 
-    function restorePageState() {
+    function restoreUIStateImmediately() {
         const raw = sessionStorage.getItem('liveOpsPageState');
-
         if (!raw) return;
 
         try {
             const state = JSON.parse(raw);
 
-            // Restore toggles
-            if (document.getElementById('toggleStops')) {
-                document.getElementById('toggleStops').checked = state.toggleStops;
+            // 1. Restore Layer Controls Panel (Instantly)
+            const layerContent = document.getElementById('layerControlsContent');
+            const layerIcon = document.getElementById('layerToggleIcon');
+            if (state.layerControlsOpen !== undefined && layerContent && layerIcon) {
+                layerContent.style.display = state.layerControlsOpen ? 'block' : 'none';
+                if (state.layerControlsOpen) {
+                    layerIcon.classList.replace('fa-chevron-down', 'fa-chevron-up');
+                } else {
+                    layerIcon.classList.replace('fa-chevron-up', 'fa-chevron-down');
+                }
             }
 
-            if (document.getElementById('toggleZones')) {
-                document.getElementById('toggleZones').checked = state.toggleZones;
-            }
+            // 2. Restore Sidebar (Instantly without animation flash)
+            if (state.sidebarCollapsed) {
+                const wrapper = document.getElementById('sidebarWrapper');
+                const btn = document.getElementById('logFloatingBtn');
+                const icon = document.getElementById('logFloatingIcon');
 
-            if (document.getElementById('toggleActiveOnly')) {
-                document.getElementById('toggleActiveOnly').checked = state.toggleActiveOnly;
-            }
+                // Temporarily kill CSS transitions so it snaps perfectly
+                wrapper.style.transition = 'none';
+                btn.style.transition = 'none';
 
-            if (document.getElementById('toggleLogCb')) {
-                document.getElementById('toggleLogCb').checked = state.toggleLogCb;
-            }
-
-            // Restore sidebar state
-            const wrapper = document.getElementById('sidebarWrapper');
-            const btn = document.getElementById('logFloatingBtn');
-            const icon = document.getElementById('logFloatingIcon');
-
-            if (state.sidebarCollapsed && wrapper && btn && icon) {
                 wrapper.classList.add('collapsed');
                 btn.classList.add('collapsed');
+                icon.classList.replace('fa-chevron-right', 'fa-chevron-left');
+                if (document.getElementById('toggleLogCb')) document.getElementById('toggleLogCb').checked = false;
 
-                icon.classList.remove('fa-chevron-right');
-                icon.classList.add('fa-chevron-left');
+                // Turn transitions back on after 50ms so user clicks animate normally
+                setTimeout(() => {
+                    wrapper.style.transition = '';
+                    btn.style.transition = '';
+                }, 50);
             }
 
-            // Restore map position
+            // 3. Restore Checkboxes
+            if (document.getElementById('toggleStops')) document.getElementById('toggleStops').checked = state.toggleStops;
+            if (document.getElementById('toggleZones')) document.getElementById('toggleZones').checked = state.toggleZones;
+            if (document.getElementById('toggleActiveOnly')) document.getElementById('toggleActiveOnly').checked = state.toggleActiveOnly;
+        } catch (e) {
+            console.error('UI Restore Error:', e);
+        }
+    }
+
+    function restoreMapState() {
+        const raw = sessionStorage.getItem('liveOpsPageState');
+        if (!raw) return;
+
+        try {
+            const state = JSON.parse(raw);
             if (map && state.mapCenter) {
                 map.setCenter(state.mapCenter);
                 map.setZoom(state.mapZoom || 15);
             }
-
-            // Restore selected shuttle
-            setTimeout(() => {
-                const shuttleSelect = document.getElementById('shuttleSearch');
-
-                if (shuttleSelect && state.selectedShuttle) {
-                    shuttleSelect.value = state.selectedShuttle;
-                }
-
-                if (
-                    state.activeInfoWindowShuttleId &&
-                    fleetMarkers[state.activeInfoWindowShuttleId]
-                ) {
-                    google.maps.event.trigger(
-                        fleetMarkers[state.activeInfoWindowShuttleId].content,
-                        'click'
-                    );
-                }
-
-                updateLayers();
-            }, 1000);
-
+            if (document.getElementById('shuttleSearch') && state.selectedShuttle) {
+                document.getElementById('shuttleSearch').value = state.selectedShuttle;
+            }
+            updateLayers();
         } catch (e) {
-            console.error('Failed restoring page state:', e);
+            console.error('Map Restore Error:', e);
         }
     }
 
-    // Detect user interaction
+    // Detect user interaction & Restore UI
     document.addEventListener('DOMContentLoaded', () => {
+        // Run UI restore immediately before the browser paints the frame
+        restoreUIStateImmediately();
 
-        const interactionSelectors = `
-            input,
-            select,
-            button,
-            textarea,
-            .interaction-target,
-            .layer-controls,
-            .activity-sidebar
-        `;
-
+        const interactionSelectors = 'input, select, button, textarea, .interaction-target, .layer-controls, .activity-sidebar, .log-floating-btn';
         document.querySelectorAll(interactionSelectors).forEach(el => {
-
             el.addEventListener('focus', () => isInteracting = true);
             el.addEventListener('blur', () => isInteracting = false);
-
             el.addEventListener('mouseenter', () => isInteracting = true);
             el.addEventListener('mouseleave', () => isInteracting = false);
-
             el.addEventListener('change', () => {
                 isInteracting = true;
                 savePageState();
-
-                setTimeout(() => {
-                    restorePageState();
-
-                    const savedId = sessionStorage.getItem('activeInfoWindowShuttleId');
-
-                    if (savedId && fleetMarkers[savedId]) {
-                        setTimeout(() => {
-                            google.maps.event.trigger(fleetMarkers[savedId].content, 'click');
-                        }, 800);
-                    }
-                }, 2500);
             });
         });
 
-        // Restore saved state after map initializes
+        // Restore map features after API initializes
         setTimeout(() => {
-            restorePageState();
+            restoreMapState();
         }, 1500);
     });
 
-    // Save state before leaving/reloading
     window.addEventListener('beforeunload', savePageState);
 
-    // Auto refresh every 15 seconds
     setInterval(() => {
-
         if (!isInteracting) {
             savePageState();
             window.location.reload();
         }
-
     }, 15000);
 </script>
 <script async defer
