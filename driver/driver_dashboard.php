@@ -1,4 +1,5 @@
 <?php
+session_set_cookie_params(2592000);
 session_start();
 date_default_timezone_set('Asia/Kuala_Lumpur');
 require_once '../config.php';

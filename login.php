@@ -1,6 +1,17 @@
 <?php
+session_set_cookie_params(2592000);
 session_start();
 require_once 'config.php';
+
+if (isset($_SESSION['user_id']) && isset($_SESSION['role'])) {
+    if ($_SESSION['role'] === 'driver') {
+        header('Location: driver/driver_dashboard.php'); 
+        exit();
+    } elseif ($_SESSION['role'] === 'admin') {
+        header('Location: admin/admin_dashboard.php'); 
+        exit();
+    }
+}
 
 $error = "";
 
