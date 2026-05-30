@@ -678,6 +678,7 @@ include $depth . 'layout/admin/header.php';
                                         $dropoff = ($route && isset($stopsMap[$route['end_stop_id']])) ? $stopsMap[$route['end_stop_id']] : 'Unknown';
 
                                         $etas = $d['etas'] ?? [];
+                                        asort($etas);
                                         $startTime = $d['departure_time'] ?? '--:--';
                                         $endTime = $startTime;
                                         $hasEtas = !empty($etas);
@@ -839,6 +840,7 @@ include $depth . 'layout/admin/header.php';
                                         $route = $routesMap[$d['route_id']] ?? null;
 
                                         $etas = $d['etas'] ?? [];
+                                        asort($etas);
                                         $startTime = $d['departure_time'] ?? '--:--';
                                         $endTime = $startTime;
                                         if (!empty($etas)) {
