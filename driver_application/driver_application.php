@@ -81,6 +81,8 @@ ob_start();
         font-weight: 500;
         color: #444;
         font-size: 0.95rem;
+        display: flex;
+        align-items: center;
     }
 
     .driver-application-form .form-group input[type="text"],
@@ -157,6 +159,83 @@ ob_start();
         transform: translateY(-2px);
     }
 
+    /* Address Grid */
+    .address-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+        background: #fcfcfc;
+        padding: 20px;
+        border: 1px solid #eee;
+        border-radius: 8px;
+    }
+    
+    .address-grid .form-group {
+        margin-bottom: 0;
+    }
+
+    .address-grid .full-width {
+        grid-column: 1 / -1;
+    }
+
+    /* Tooltip Styles */
+    .tooltip-wrapper {
+        position: relative;
+        display: inline-block;
+        margin-left: 8px;
+    }
+
+    .tooltip-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        background: #003366;
+        color: #fff;
+        border-radius: 50%;
+        font-size: 0.75rem;
+        cursor: help;
+        font-weight: bold;
+    }
+
+    .tooltip-text {
+        visibility: hidden;
+        width: 260px;
+        background-color: #333;
+        color: #fff;
+        text-align: left;
+        border-radius: 6px;
+        padding: 10px 12px;
+        position: absolute;
+        z-index: 10;
+        bottom: 130%;
+        left: 50%;
+        margin-left: -130px;
+        opacity: 0;
+        transition: opacity 0.3s;
+        font-size: 0.8rem;
+        line-height: 1.5;
+        font-weight: normal;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
+    .tooltip-text::after {
+        content: "";
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        margin-left: -5px;
+        border-width: 5px;
+        border-style: solid;
+        border-color: #333 transparent transparent transparent;
+    }
+
+    .tooltip-wrapper:hover .tooltip-text {
+        visibility: visible;
+        opacity: 1;
+    }
+
     /* Success/Error Alerts */
     .alert {
         padding: 15px;
@@ -212,13 +291,8 @@ ob_start();
     }
 
     @keyframes spin {
-        0% {
-            transform: rotate(0deg);
-        }
-
-        100% {
-            transform: rotate(360deg);
-        }
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
     }
 
     .loader-text {
@@ -262,8 +336,8 @@ include $depth . 'layout/public/header.php';
             </div>
 
             <div class="form-group">
-                <label for="ic_number">IC Number *</label>
-                <input type="text" id="ic_number" name="ic_number" required placeholder="e.g., 900101-14-5555">
+                <label for="ic_number">IC Number (without dashes) *</label>
+                <input type="text" id="ic_number" name="ic_number" required placeholder="e.g., 900101145555" maxlength="12" pattern="\d{12}" title="Please enter exactly 12 numbers with no dashes">
             </div>
 
             <div class="form-group">
@@ -277,7 +351,7 @@ include $depth . 'layout/public/header.php';
 
             <div class="form-group">
                 <label for="dob">Date of Birth *</label>
-                <input type="date" id="dob" name="dob" required>
+                <input type="date" id="dob" name="dob" required readonly style="background-color: #e9ecef; cursor: not-allowed; color:#666;">
             </div>
         </div>
 
@@ -294,17 +368,59 @@ include $depth . 'layout/public/header.php';
             </div>
 
             <div class="form-group">
-                <label for="home_address">Current Home Address *</label>
-                <textarea id="home_address" name="home_address" rows="3" required
-                    placeholder="Enter your full residential address"></textarea>
+                <label>Current Home Address *</label>
+                <input type="hidden" id="home_address" name="home_address" required>
+                
+                <div class="address-grid">
+                    <div class="form-group full-width">
+                        <input type="text" id="addr_line1" required placeholder="Address Line 1 (House/Unit No., Street Name)">
+                    </div>
+                    <div class="form-group full-width">
+                        <input type="text" id="addr_line2" placeholder="Address Line 2 (Taman/Kampung/Building) - Optional">
+                    </div>
+                    <div class="form-group">
+                        <input type="text" id="addr_postcode" required placeholder="Postcode" maxlength="5" pattern="\d{5}">
+                    </div>
+                    <div class="form-group">
+                        <input type="text" id="addr_city" required placeholder="City">
+                    </div>
+                    <div class="form-group full-width">
+                        <select id="addr_state" required>
+                            <option value="" disabled selected>Select State</option>
+                            <option value="Johor">Johor</option>
+                            <option value="Kedah">Kedah</option>
+                            <option value="Kelantan">Kelantan</option>
+                            <option value="Melaka">Melaka</option>
+                            <option value="Negeri Sembilan">Negeri Sembilan</option>
+                            <option value="Pahang">Pahang</option>
+                            <option value="Perak">Perak</option>
+                            <option value="Perlis">Perlis</option>
+                            <option value="Pulau Pinang">Pulau Pinang</option>
+                            <option value="Sabah">Sabah</option>
+                            <option value="Sarawak">Sarawak</option>
+                            <option value="Selangor">Selangor</option>
+                            <option value="Terengganu">Terengganu</option>
+                            <option value="WP Kuala Lumpur">WP Kuala Lumpur</option>
+                            <option value="WP Labuan">WP Labuan</option>
+                            <option value="WP Putrajaya">WP Putrajaya</option>
+                        </select>
+                    </div>
+                </div>
             </div>
         </div>
 
         <div class="driver-card">
             <h3><i class="fas fa-id-card"></i> Driving Credentials</h3>
             <div class="form-group">
-                <label for="license_number">Driving License Number *</label>
-                <input type="text" id="license_number" name="license_number" required>
+                <label for="license_number">
+                    Driving License Serial Number
+                    <div class="tooltip-wrapper">
+                        <span class="tooltip-icon">?</span>
+                        <span class="tooltip-text"> Take a look at the back of your driving license card. It is typically located in the top-left corner.</span>
+                    </div>
+                    &nbsp;*
+                </label>
+                <input type="text" id="license_number" name="license_number" required placeholder="e.g., IZYYiLNg">
             </div>
 
             <div class="form-group">
@@ -329,7 +445,7 @@ include $depth . 'layout/public/header.php';
                 each).</p>
 
             <div class="form-group">
-                <label for="doc_profile_pic">Profile Picture *</label>
+                <label for="doc_profile_pic">Passport Image *</label>
                 <input type="file" id="doc_profile_pic" name="doc_profile_pic" accept="image/*,application/pdf"
                     required>
             </div>
@@ -379,6 +495,7 @@ include $depth . 'layout/public/header.php';
 </div>
 
 <script>
+    // Global Loader
     function showGlobalLoader(message = 'Processing...') {
         document.getElementById('globalLoaderText').innerText = message;
         document.getElementById('globalLoader').classList.add('active');
@@ -387,6 +504,58 @@ include $depth . 'layout/public/header.php';
             submitBtn.disabled = true;
         }
     }
+
+    // FEATURE 1 & 2: IC Number formatting and DOB Auto-detect
+    const icInput = document.getElementById('ic_number');
+    const dobInput = document.getElementById('dob');
+
+    icInput.addEventListener('input', function(e) {
+        // Force numbers only & remove dashes dynamically as user types
+        this.value = this.value.replace(/[^0-9]/g, '');
+
+        if (this.value.length >= 6) {
+            let yy = parseInt(this.value.substring(0, 2));
+            let mm = this.value.substring(2, 4);
+            let dd = this.value.substring(4, 6);
+
+            // Determine Century (Standard rule: if year is greater than current year's last 2 digits, it's 1900s)
+            let currentYear = new Date().getFullYear();
+            let currentYY = currentYear % 100;
+            let century = (yy > currentYY) ? 1900 : 2000;
+            let fullYear = century + yy;
+
+            // Simple validation before setting value
+            if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+                dobInput.value = `${fullYear}-${mm}-${dd}`;
+            }
+        } else {
+            dobInput.value = '';
+        }
+    });
+
+    // FEATURE 3: Seamless Address Assembly
+    // This merges your new inputs into the hidden "home_address" field so your backend submit_application.php doesn't break
+    function buildHiddenAddress() {
+        const line1 = document.getElementById('addr_line1').value.trim();
+        const line2 = document.getElementById('addr_line2').value.trim();
+        const postcode = document.getElementById('addr_postcode').value.trim();
+        const city = document.getElementById('addr_city').value.trim();
+        const state = document.getElementById('addr_state').value || '';
+
+        let fullAddress = line1;
+        if (line2) fullAddress += `, ${line2}`;
+        if (postcode || city) fullAddress += `, ${postcode} ${city}`;
+        if (state) fullAddress += `, ${state}`;
+
+        document.getElementById('home_address').value = fullAddress;
+    }
+
+    const addressFields = ['addr_line1', 'addr_line2', 'addr_postcode', 'addr_city', 'addr_state'];
+    addressFields.forEach(id => {
+        document.getElementById(id).addEventListener('input', buildHiddenAddress);
+        document.getElementById(id).addEventListener('change', buildHiddenAddress);
+    });
+
 </script>
 
 <?php include $depth . 'layout/public/footer.php'; ?>
