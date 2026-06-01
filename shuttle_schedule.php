@@ -99,19 +99,10 @@ if (!empty($documents)) {
         ];
     }
 }
+$depth = '';
+$pageTitle = 'CampusPulse – Shuttle Schedules';
+include 'layout/public/header.php'; 
 ?>
-<!DOCTYPE html>
-<html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shuttle Schedules - CampusPulse</title>
-
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap"
-        rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="css/style.css">
 
     <style>
         /* ========================================
@@ -365,11 +356,8 @@ if (!empty($documents)) {
             color: #555;
         }
     </style>
-</head>
 
-<body class="schedule-body">
-
-    <?php include 'layout/public/header.php'; ?>
+<div class="schedule-body">
 
     <div class="search-header">
         <h1>Find Your Shuttle</h1>
@@ -518,6 +506,7 @@ if (!empty($documents)) {
             </div>
         </div>
     </div>
+</div>
 
     <!-- Pass stopsMap to JavaScript -->
     <script>
@@ -604,8 +593,5 @@ if (!empty($documents)) {
         }
     </script>
 
-    <?php include 'layout/footer.php'; ?>
+    <?php include 'layout/public/footer.php'; ?>
 
-</body>
-
-</html>
