@@ -9,10 +9,10 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
 $today = date('Y-m-d');
 
 try {
-    // Find all schedules BEFORE today that are NOT YET archived
+    // Find all schedules BEFORE today that are still hanging as published/active
     $pastSchedules = $firestore->collection('Schedules')
         ->where('date', '<', $today)
-        ->where('status', '!=', 'archived') 
+        ->where('status', 'in', ['published', 'active']) 
         ->documents();
 
     $count = 0;
@@ -20,9 +20,9 @@ try {
     $batchCount = 0;
 
     foreach ($pastSchedules as $doc) {
-        // CHANGED: Update status instead of delete
+        // Change hanging schedules to missed to preserve history
         $batch->update($doc->reference(), [
-            ['path' => 'status', 'value' => 'archived']
+            ['path' => 'status', 'value' => 'missed']
         ]);
         
         $count++;
@@ -39,7 +39,7 @@ try {
         $batch->flush();
     }
 
-    $msg = "Success! Archived $count past schedules. History is safe.";
+    $msg = "Success! Swept $count dangling past schedules. History is safe.";
     header("Location: schedules_management.php?msg=" . urlencode($msg));
     exit();
 

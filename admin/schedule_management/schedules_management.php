@@ -18,11 +18,13 @@ $nowTime = time();
 $batch = $firestore->bulkWriter();
 $updatesCount = 0;
 
-// A. Archive Past Days
+// A. Archive Past Days (Only mark hanging trips as missed, preserve completed/cancelled)
 $expiredQuery = $firestore->collection('Schedules')->where('date', '<', $today)->limit(30)->documents();
 foreach ($expiredQuery as $doc) {
-    if (($doc->data()['status'] ?? '') !== 'archived') {
-        $batch->update($doc->reference(), [['path' => 'status', 'value' => 'archived']]);
+    $status = $doc->data()['status'] ?? '';
+    // Only update if it was left hanging
+    if (in_array($status, ['published', 'active'])) {
+        $batch->update($doc->reference(), [['path' => 'status', 'value' => 'missed']]);
         $updatesCount++;
     }
 }
@@ -531,6 +533,19 @@ include $depth . 'layout/admin/header.php';
             opacity: 0.4;
             cursor: not-allowed;
         }
+
+        /* Force the invisible native calendar button to cover the entire container */
+    input[type="date"].interaction-target::-webkit-calendar-picker-indicator {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+        margin: 0;
+        padding: 0;
+    }
     </style>
 
                 <div
@@ -610,9 +625,7 @@ include $depth . 'layout/admin/header.php';
 
                             <div class="filter-row">
                                 <div class="filter-controls">
-                                    <input type="date" id="filterDateActive" class="filter-input"
-                                        onchange="applyFilters('tableActive')" title="Filter by Date">
-
+                                    
                                     <select id="filterRouteActive" class="filter-input"
                                         onchange="applyFilters('tableActive')" title="Filter by Route">
                                         <option value="">All Routes</option>
@@ -632,7 +645,20 @@ include $depth . 'layout/admin/header.php';
                                         <?php endforeach; ?>
                                     </select>
 
-                                    <button type="button" class="btn-reset" onclick="resetTableFilters('tableActive')">
+                                    <div style="position:relative; width: 38px; height: 38px; flex: none;">
+                                        <input type="date" id="filterDateActive" class="interaction-target" 
+                                               style="position:absolute; width:100%; height:100%; opacity:0; cursor:pointer; z-index:2;" title="Filter by Date">
+                                        <div id="dateFilterBgActive" style="position:absolute; width:100%; height:100%; background:#fff; border: 1px solid #cbd5e0; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#94a3b8; z-index:1; transition: border-color 0.2s;">
+                                            <i class="fas fa-calendar-alt" id="dateFilterIconActive"></i>
+                                        </div>
+                                    </div>
+
+                                    <input type="hidden" id="sortOrderActive" value="asc">
+                                    <button type="button" id="sortToggleBtnActive" class="btn-reset interaction-target" onclick="toggleSortOrder('Active')" title="Toggle Sort Order" style="padding: 0 10px !important;">
+                                        <i class="fas fa-sort-amount-down" id="sortIconActive"></i>
+                                    </button>
+
+                                    <button type="button" class="btn-reset interaction-target" onclick="resetTableFilters('tableActive')">
                                         <i class="fas fa-undo"></i> Reset
                                     </button>
                                 </div>
@@ -690,7 +716,9 @@ include $depth . 'layout/admin/header.php';
                                         ?>
                                         <tr class="searchable-row" data-date="<?= htmlspecialchars($d['date']) ?>"
                                             data-route="<?= htmlspecialchars($d['route_id']) ?>"
-                                            data-shuttle="<?= htmlspecialchars($d['shuttle_id']) ?>">
+                                            data-shuttle="<?= htmlspecialchars($d['shuttle_id']) ?>"
+                                            data-ts="<?= strtotime($d['date'] . ' ' . $d['departure_time']) ?>"
+                                            data-status="<?= strtolower($status) ?>">
                                             <td style="text-align:center;"><input type="checkbox" name="ids[]"
                                                     value="<?= $s->id() ?>" class="cb-active"></td>
                                             <td style="font-weight:600;">
@@ -778,8 +806,14 @@ include $depth . 'layout/admin/header.php';
 
                             <div class="filter-row">
                                 <div class="filter-controls">
-                                    <input type="date" id="filterDateArchived" class="filter-input"
-                                        onchange="applyFilters('tableArchived')" title="Filter by Date">
+
+                                    <select id="filterStatusArchived" class="filter-input" onchange="applyFilters('tableArchived')" title="Filter by Status">
+                                        <option value="">All Statuses</option>
+                                        <option value="completed">Completed</option>
+                                        <option value="missed">Missed</option>
+                                        <option value="cancelled">Cancelled</option>
+                                        <option value="archived">Archived</option>
+                                    </select>
 
                                     <select id="filterRouteArchived" class="filter-input"
                                         onchange="applyFilters('tableArchived')" title="Filter by Route">
@@ -800,7 +834,20 @@ include $depth . 'layout/admin/header.php';
                                         <?php endforeach; ?>
                                     </select>
 
-                                    <button type="button" class="btn-reset"
+                                    <div style="position:relative; width: 38px; height: 38px; flex: none;">
+                                        <input type="date" id="filterDateArchived" class="interaction-target" 
+                                               style="position:absolute; width:100%; height:100%; opacity:0; cursor:pointer; z-index:2;" title="Filter by Date">
+                                        <div id="dateFilterBgArchived" style="position:absolute; width:100%; height:100%; background:#fff; border: 1px solid #cbd5e0; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#94a3b8; z-index:1; transition: border-color 0.2s;">
+                                            <i class="fas fa-calendar-alt" id="dateFilterIconArchived"></i>
+                                        </div>
+                                    </div>
+
+                                    <input type="hidden" id="sortOrderArchived" value="desc">
+                                    <button type="button" id="sortToggleBtnArchived" class="btn-reset interaction-target" onclick="toggleSortOrder('Archived')" title="Toggle Sort Order" style="padding: 0 10px !important;">
+                                        <i class="fas fa-sort-amount-down" id="sortIconArchived"></i>
+                                    </button>
+
+                                    <button type="button" class="btn-reset interaction-target"
                                         onclick="resetTableFilters('tableArchived')">
                                         <i class="fas fa-undo"></i> Reset
                                     </button>
@@ -848,15 +895,35 @@ include $depth . 'layout/admin/header.php';
                                             $endTime = end($etas);
                                         }
                                         ?>
+                                        <?php
+                                            $trueStatus = $d['status'] ?? 'archived';
+                                            $statusBadge = 'badge-archived';
+                                            if ($trueStatus === 'completed') $statusBadge = 'badge-published'; 
+                                            elseif ($trueStatus === 'missed') $statusBadge = 'badge-missed'; 
+                                            elseif ($trueStatus === 'cancelled') $statusBadge = 'badge-cancelled'; 
+                                            
+                                            $cancellationHtml = '';
+                                            if ($trueStatus === 'cancelled' && !empty($d['cancellation_reason'])) {
+                                                $cancellationHtml = '<div style="font-size:0.75rem; color:#e74c3c; margin-top:6px; line-height:1.3; max-width:200px; white-space:normal;"><b>Reason:</b> ' . htmlspecialchars($d['cancellation_reason']) . '</div>';
+                                            }
+                                        ?>
                                         <tr class="searchable-row" data-date="<?= htmlspecialchars($d['date']) ?>"
                                             data-route="<?= htmlspecialchars($d['route_id']) ?>"
                                             data-shuttle="<?= htmlspecialchars($d['shuttle_id']) ?>"
+                                            data-ts="<?= strtotime($d['date'] . ' ' . $d['departure_time']) ?>"
+                                            data-status="<?= strtolower($trueStatus) ?>"
                                             style="background:#f9f9f9; color:#666;">
                                             <td style="text-align:center;"><input type="checkbox" name="ids[]"
                                                     value="<?= $s->id() ?>" class="cb-archived"></td>
-                                            <td>
+                                            <td style="font-weight:600; vertical-align: top;">
                                                 <?= date('d M Y', strtotime($d['date'])) ?>
-                                                <div class="badge badge-archived">Archived</div>
+                                                <div style="margin-top:4px;">
+                                                    <span class="badge badge-archived">Archived</span>
+                                                    <?php if ($trueStatus !== 'archived'): ?>
+                                                        <span class="badge <?= $statusBadge ?>"><?= ucfirst($trueStatus) ?></span>
+                                                    <?php endif; ?>
+                                                </div>
+                                                <?= $cancellationHtml ?>
                                             </td>
                                             <td>
                                                 <div style="font-weight:bold; color:#555;">
@@ -1127,11 +1194,34 @@ include $depth . 'layout/admin/header.php';
             renderTable(tableId);
         }
 
+        function toggleSortOrder(type) {
+            const sortInput = document.getElementById(`sortOrder${type}`);
+            const sortIcon = document.getElementById(`sortIcon${type}`);
+            if (sortInput.value === 'desc') {
+                sortInput.value = 'asc';
+                sortIcon.className = 'fas fa-sort-amount-up';
+            } else {
+                sortInput.value = 'desc';
+                sortIcon.className = 'fas fa-sort-amount-down';
+            }
+            applyFilters(`table${type}`);
+        }
+
         function resetTableFilters(tableId) {
             const suffix = tableId === 'tableActive' ? 'Active' : 'Archived';
+            
             document.getElementById(`filterDate${suffix}`).value = '';
+            document.getElementById(`dateFilterIcon${suffix}`).style.color = '#94a3b8';
+            document.getElementById(`dateFilterBg${suffix}`).style.borderColor = '#cbd5e0';
+            
             document.getElementById(`filterRoute${suffix}`).value = '';
             document.getElementById(`filterShuttle${suffix}`).value = '';
+            
+            if (suffix === 'Archived') document.getElementById('filterStatusArchived').value = '';
+            
+            document.getElementById(`sortOrder${suffix}`).value = suffix === 'Active' ? 'asc' : 'desc';
+            document.getElementById(`sortIcon${suffix}`).className = 'fas fa-sort-amount-down';
+            
             applyFilters(tableId);
         }
 
@@ -1140,19 +1230,23 @@ include $depth . 'layout/admin/header.php';
             const dateVal = document.getElementById(`filterDate${suffix}`).value;
             const routeVal = document.getElementById(`filterRoute${suffix}`).value;
             const shuttleVal = document.getElementById(`filterShuttle${suffix}`).value;
+            const statusVal = suffix === 'Archived' ? document.getElementById('filterStatusArchived').value : '';
+            const sortOrder = document.getElementById(`sortOrder${suffix}`).value;
 
-            const rows = document.querySelectorAll(`#${tableId} tbody tr.searchable-row`);
+            let rows = Array.from(document.querySelectorAll(`#${tableId} tbody tr.searchable-row`));
 
             rows.forEach(row => {
                 const rowDate = row.dataset.date || "";
                 const rowRoute = row.dataset.route || "";
                 const rowShuttle = row.dataset.shuttle || "";
+                const rowStatus = row.dataset.status || "";
 
                 const matchDate = (dateVal === "" || rowDate === dateVal);
                 const matchRoute = (routeVal === "" || rowRoute === routeVal);
                 const matchShuttle = (shuttleVal === "" || rowShuttle === shuttleVal);
+                const matchStatus = (statusVal === "" || rowStatus === statusVal);
 
-                if (matchDate && matchRoute && matchShuttle) {
+                if (matchDate && matchRoute && matchShuttle && matchStatus) {
                     row.classList.remove('search-hidden');
                 } else {
                     row.classList.add('search-hidden');
@@ -1160,6 +1254,17 @@ include $depth . 'layout/admin/header.php';
                     if (cb) cb.checked = false;
                 }
             });
+
+            // Sort rows based on data-ts globally before pagination
+            rows.sort((a, b) => {
+                const tsA = parseInt(a.dataset.ts || 0);
+                const tsB = parseInt(b.dataset.ts || 0);
+                return sortOrder === 'desc' ? (tsB - tsA) : (tsA - tsB);
+            });
+
+            // Re-append sorted rows to tbody
+            const tbody = document.querySelector(`#${tableId} tbody`);
+            rows.forEach(row => tbody.appendChild(row));
 
             updateDeleteButtonState(tableId === 'tableActive' ? 'active' : 'archived');
 
@@ -1179,12 +1284,10 @@ include $depth . 'layout/admin/header.php';
             const startIndex = (currentPage - 1) * ROWS_PER_PAGE;
             const endIndex = startIndex + ROWS_PER_PAGE;
 
-            // Hide all rows
             document.querySelectorAll(`#${tableId} tbody tr.searchable-row`).forEach(row => {
                 row.style.display = 'none';
             });
 
-            // Show current page
             visibleRows.slice(startIndex, endIndex).forEach(row => {
                 row.style.display = '';
             });
@@ -1231,6 +1334,126 @@ include $depth . 'layout/admin/header.php';
             table.dataset.currentPage = targetPage;
             renderTable(tableId);
         }
+
+        // =========================================
+        // SILENT SYNC & STATE PRESERVATION
+        // =========================================
+        let isInteracting = false;
+
+        document.addEventListener("DOMContentLoaded", () => {
+            // Restore active filters
+            if(sessionStorage.getItem('sched_date_act')) {
+                const actDate = document.getElementById('filterDateActive');
+                actDate.value = sessionStorage.getItem('sched_date_act');
+                if(actDate.value) {
+                    document.getElementById('dateFilterIconActive').style.color = 'var(--primary-blue)';
+                    document.getElementById('dateFilterBgActive').style.borderColor = 'var(--primary-blue)';
+                }
+            }
+            if(sessionStorage.getItem('sched_route_act')) document.getElementById('filterRouteActive').value = sessionStorage.getItem('sched_route_act');
+            if(sessionStorage.getItem('sched_shut_act')) document.getElementById('filterShuttleActive').value = sessionStorage.getItem('sched_shut_act');
+            if(sessionStorage.getItem('sched_sort_act')) {
+                document.getElementById('sortOrderActive').value = sessionStorage.getItem('sched_sort_act');
+                document.getElementById('sortIconActive').className = sessionStorage.getItem('sched_sort_act') === 'asc' ? 'fas fa-sort-amount-up' : 'fas fa-sort-amount-down';
+            }
+            
+            // Restore archived filters
+            if(sessionStorage.getItem('sched_date_arc')) {
+                const arcDate = document.getElementById('filterDateArchived');
+                arcDate.value = sessionStorage.getItem('sched_date_arc');
+                if(arcDate.value) {
+                    document.getElementById('dateFilterIconArchived').style.color = 'var(--primary-blue)';
+                    document.getElementById('dateFilterBgArchived').style.borderColor = 'var(--primary-blue)';
+                }
+            }
+            if(sessionStorage.getItem('sched_route_arc')) document.getElementById('filterRouteArchived').value = sessionStorage.getItem('sched_route_arc');
+            if(sessionStorage.getItem('sched_shut_arc')) document.getElementById('filterShuttleArchived').value = sessionStorage.getItem('sched_shut_arc');
+            if(sessionStorage.getItem('sched_stat_arc')) document.getElementById('filterStatusArchived').value = sessionStorage.getItem('sched_stat_arc');
+            if(sessionStorage.getItem('sched_sort_arc')) {
+                document.getElementById('sortOrderArchived').value = sessionStorage.getItem('sched_sort_arc');
+                document.getElementById('sortIconArchived').className = sessionStorage.getItem('sched_sort_arc') === 'asc' ? 'fas fa-sort-amount-up' : 'fas fa-sort-amount-down';
+            }
+
+            applyFilters('tableActive');
+            applyFilters('tableArchived');
+            
+            // Setup Interaction Listeners
+            const interactionSelectors = 'input, select, button, form, .interaction-target, .modal-overlay, .modal-content';
+            document.querySelectorAll(interactionSelectors).forEach(el => {
+                el.addEventListener('focus', () => isInteracting = true);
+                el.addEventListener('blur', () => isInteracting = false);
+                el.addEventListener('mouseover', () => isInteracting = true);
+                el.addEventListener('mouseout', () => isInteracting = false);
+                el.addEventListener('change', () => isInteracting = true);
+            });
+
+            // Date Icon Listeners
+            ['Active', 'Archived'].forEach(suffix => {
+                const dateInput = document.getElementById(`filterDate${suffix}`);
+                if (dateInput) {
+                    dateInput.addEventListener('change', function() {
+                        const icon = document.getElementById(`dateFilterIcon${suffix}`);
+                        const bg = document.getElementById(`dateFilterBg${suffix}`);
+                        if (this.value) {
+                            icon.style.color = 'var(--primary-blue)';
+                            bg.style.borderColor = 'var(--primary-blue)';
+                        } else {
+                            icon.style.color = '#94a3b8';
+                            bg.style.borderColor = '#cbd5e0';
+                        }
+                        applyFilters(`table${suffix}`);
+                    });
+                }
+            });
+        });
+
+        window.addEventListener('beforeunload', () => {
+            if(document.getElementById('filterDateActive')) sessionStorage.setItem('sched_date_act', document.getElementById('filterDateActive').value);
+            if(document.getElementById('filterRouteActive')) sessionStorage.setItem('sched_route_act', document.getElementById('filterRouteActive').value);
+            if(document.getElementById('filterShuttleActive')) sessionStorage.setItem('sched_shut_act', document.getElementById('filterShuttleActive').value);
+            if(document.getElementById('sortOrderActive')) sessionStorage.setItem('sched_sort_act', document.getElementById('sortOrderActive').value);
+            
+            if(document.getElementById('filterDateArchived')) sessionStorage.setItem('sched_date_arc', document.getElementById('filterDateArchived').value);
+            if(document.getElementById('filterRouteArchived')) sessionStorage.setItem('sched_route_arc', document.getElementById('filterRouteArchived').value);
+            if(document.getElementById('filterShuttleArchived')) sessionStorage.setItem('sched_shut_arc', document.getElementById('filterShuttleArchived').value);
+            if(document.getElementById('filterStatusArchived')) sessionStorage.setItem('sched_stat_arc', document.getElementById('filterStatusArchived').value);
+            if(document.getElementById('sortOrderArchived')) sessionStorage.setItem('sched_sort_arc', document.getElementById('sortOrderArchived').value);
+        });
+
+        // Silent Real-Time Refresh
+        setInterval(() => {
+            const anyModalOpen = Array.from(document.querySelectorAll('.modal-overlay')).some(m => m.style.display === 'flex');
+            if (!isInteracting && !anyModalOpen) {
+                fetch(window.location.href)
+                    .then(res => {
+                        if (!res.ok) throw new Error("HTTP " + res.status);
+                        return res.text();
+                    })
+                    .then(html => {
+                        const doc = new DOMParser().parseFromString(html, 'text/html');
+                        
+                        const newTableActive = doc.getElementById('tableActive');
+                        const newTableArchived = doc.getElementById('tableArchived');
+                        
+                        if (newTableActive && newTableArchived) {
+                            document.querySelector('#tableActive tbody').innerHTML = newTableActive.querySelector('tbody').innerHTML;
+                            document.querySelector('#tableArchived tbody').innerHTML = newTableArchived.querySelector('tbody').innerHTML;
+                            
+                            applyFilters('tableActive');
+                            applyFilters('tableArchived');
+
+                            document.querySelectorAll('input, select, button, form, .interaction-target, .modal-overlay, .modal-content').forEach(el => {
+                                el.addEventListener('focus', () => isInteracting = true);
+                                el.addEventListener('blur', () => isInteracting = false);
+                                el.addEventListener('mouseover', () => isInteracting = true);
+                                el.addEventListener('mouseout', () => isInteracting = false);
+                                el.addEventListener('change', () => isInteracting = true);
+                            });
+                        }
+                    })
+                    .catch(err => console.warn("Silent sync failed", err.message));
+            }
+        }, 8000);
     </script>
 
 <?php include $depth . 'layout/admin/footer.php'; ?>

@@ -49,6 +49,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $shuttle_id = $_POST['shuttle_id'] ?? '';
     $driver_id = $_POST['driver_id'] ?? null;
     $status = $_POST['status'] ?? 'published';
+    
+    // Capture Cancellation Reason
+    $cancelReason = '';
+    if ($status === 'cancelled') {
+        $cancelReason = $_POST['cancel_reason'] ?? '';
+        if ($cancelReason === 'Other') {
+            $cancelReason = trim($_POST['other_reason'] ?? '');
+        }
+    }
 
     if (!$departure_time || !$shuttle_id) {
         $error = "Departure time and shuttle are required.";
@@ -66,13 +75,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
-            // 2. Save the new times and ETAs
+            // 2. Save the new times, ETAs, and Cancellation Reason
             $ref->update([
                 ['path' => 'departure_time', 'value' => $departure_time],
                 ['path' => 'etas', 'value' => $newEtas],
                 ['path' => 'shuttle_id', 'value' => $shuttle_id],
                 ['path' => 'driver_id', 'value' => $driver_id ?: null],
                 ['path' => 'status', 'value' => $status],
+                ['path' => 'cancellation_reason', 'value' => $cancelReason],
                 ['path' => 'updated_at', 'value' => date('Y-m-d H:i:s')]
             ]);
             header('Location: schedules_management.php?msg=updated');
@@ -138,13 +148,62 @@ include $depth . 'layout/admin/header.php';
 
         <div style="margin-bottom:25px;">
             <label style="font-weight:600;">Status</label>
-            <select name="status" class="form-control">
+            <select name="status" id="statusSelect" class="form-control" onchange="toggleCancelReason()">
                 <option value="published" <?= ($schedule['status'] ?? '') === 'published' ? 'selected' : '' ?>>Published
                 </option>
                 <option value="cancelled" <?= ($schedule['status'] ?? '') === 'cancelled' ? 'selected' : '' ?>>Cancelled
                 </option>
             </select>
         </div>
+
+        <?php 
+            $existingReason = $schedule['cancellation_reason'] ?? '';
+            $isOther = !in_array($existingReason, ['', 'Vehicle Breakdown', 'Driver Unavailable', 'Weather Conditions', 'Low Demand']) && !empty($existingReason);
+        ?>
+
+        <div id="cancelReasonGroup" style="margin-bottom:25px; display: <?= ($schedule['status'] ?? '') === 'cancelled' ? 'block' : 'none' ?>;">
+            <label style="font-weight:600; color:#e74c3c;">Cancellation Reason</label>
+            <select name="cancel_reason" id="cancelReasonSelect" class="form-control" onchange="toggleOtherReason()">
+                <option value="">-- Select Reason --</option>
+                <option value="Vehicle Breakdown" <?= $existingReason === 'Vehicle Breakdown' ? 'selected' : '' ?>>Vehicle Breakdown</option>
+                <option value="Driver Unavailable" <?= $existingReason === 'Driver Unavailable' ? 'selected' : '' ?>>Driver Unavailable</option>
+                <option value="Weather Conditions" <?= $existingReason === 'Weather Conditions' ? 'selected' : '' ?>>Weather Conditions</option>
+                <option value="Low Demand" <?= $existingReason === 'Low Demand' ? 'selected' : '' ?>>Low Demand</option>
+                <option value="Other" <?= $isOther ? 'selected' : '' ?>>Other (Specify)</option>
+            </select>
+
+            <input type="text" name="other_reason" id="otherReasonInput" class="form-control" 
+                placeholder="Specify reason..." 
+                value="<?= $isOther ? htmlspecialchars($existingReason) : '' ?>"
+                style="margin-top: 10px; display: <?= $isOther ? 'block' : 'none' ?>;">
+        </div>
+
+        <script>
+            function toggleCancelReason() {
+                const status = document.getElementById('statusSelect').value;
+                const reasonGroup = document.getElementById('cancelReasonGroup');
+                const reasonSelect = document.getElementById('cancelReasonSelect');
+                if (status === 'cancelled') {
+                    reasonGroup.style.display = 'block';
+                    reasonSelect.required = true;
+                } else {
+                    reasonGroup.style.display = 'none';
+                    reasonSelect.required = false;
+                }
+            }
+
+            function toggleOtherReason() {
+                const reason = document.getElementById('cancelReasonSelect').value;
+                const otherInput = document.getElementById('otherReasonInput');
+                if (reason === 'Other') {
+                    otherInput.style.display = 'block';
+                    otherInput.required = true;
+                } else {
+                    otherInput.style.display = 'none';
+                    otherInput.required = false;
+                }
+            }
+        </script>
 
         <div style="display:flex; justify-content:space-between;">
             <a href="schedules_management.php" class="btn" style="background:#eee; color:#333;">Cancel</a>
