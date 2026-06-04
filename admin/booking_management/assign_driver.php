@@ -28,13 +28,19 @@ if (empty($driverId)) {
     $pickupStopId = $booking['pickup_stop_id'] ?? '';
 
     $zoneId = null;
+    $pickupLat = 0;
+    $pickupLng = 0;
+    
     if ($pickupStopId) {
         $stopSnap = $db->collection('Stops')->document($pickupStopId)->snapshot();
         if ($stopSnap->exists()) {
-            $zones = $stopSnap->data()['zone_ids'] ?? [];
+            $stopData = $stopSnap->data();
+            $zones = $stopData['zone_ids'] ?? [];
             if (!empty($zones)) {
                 $zoneId = $zones[0];
             }
+            $pickupLat = floatval($stopData['lat'] ?? 0);
+            $pickupLng = floatval($stopData['lng'] ?? 0);
         }
     }
 
@@ -43,17 +49,31 @@ if (empty($driverId)) {
         exit();
     }
 
-    $shuttlesInZone = [];
-    $shuttlesRef = $db->collection('Shuttles')->where('zone_id', '=', $zoneId)->documents();
-    foreach ($shuttlesRef as $s) {
-        $shuttlesInZone[] = $s->id();
+    // Step 1: Find all Online Shuttles in the Pickup Zone
+    $onlineShuttles = [];
+    $shuttlesQuery = $db->collection('Shuttles')->where('is_online', '=', true)->documents();
+    foreach ($shuttlesQuery as $sDoc) {
+        if ($sDoc->exists()) {
+            $sData = $sDoc->data();
+            if (($sData['zone_id'] ?? '') === $zoneId) { 
+                $onlineShuttles[$sDoc->id()] = $sData;
+            }
+        }
     }
 
-    if (empty($shuttlesInZone)) {
-        header('Location: bookings_management.php?err=No shuttles operate in this zone');
-        exit();
+    // Step 2: Map drivers to those shuttles
+    $driverMap = []; 
+    $staffs = $db->collection('Staffs')->where('role', '=', 'driver')->documents();
+    foreach ($staffs as $stf) {
+        if ($stf->exists()) {
+            $sId = $stf->data()['assigned_shuttle_id'] ?? '';
+            if (!empty($sId)) {
+                $driverMap[$sId] = $stf->id();
+            }
+        }
     }
-    
+
+    // Step 3: Find drivers currently busy with other active trips
     $busyDrivers = [];
     $activeJobs = $db->collection('Bookings')
         ->where('status', 'in', ['confirmed', 'arriving', 'arrived', 'onboard'])
@@ -63,6 +83,7 @@ if (empty($driverId)) {
             $busyDrivers[] = $job->data()['driver_id'];
         }
     }
+    
     $activeScheds = $db->collection('Schedules')
         ->where('status', '=', 'active')
         ->documents();
@@ -71,26 +92,32 @@ if (empty($driverId)) {
             $busyDrivers[] = $sched->data()['driver_id'];
         }
     }
-    
-    $availableDrivers = [];
-    $driversRef = $db->collection('Staffs')
-        ->where('role', '=', 'driver')
-        ->where('status', '=', 'active')
-        ->documents();
 
-    foreach ($driversRef as $d) {
-        $dData = $d->data();
-        $assignedShuttle = $dData['assigned_shuttle_id'] ?? '';
-        
-        // Ensure shuttle is in zone AND driver is not busy
-        if (in_array($assignedShuttle, $shuttlesInZone) && !in_array($d->id(), $busyDrivers)) {
-            $availableDrivers[] = $d->id();
+    // Step 4: Calculate distance and find the nearest available driver
+    $nearestDriverId = null;
+    $shortestDistance = PHP_FLOAT_MAX;
+
+    foreach ($onlineShuttles as $shuttleId => $sData) {
+        if (isset($driverMap[$shuttleId])) {
+            $dId = $driverMap[$shuttleId];
+            if (!in_array($dId, $busyDrivers)) {
+                $sLat = floatval($sData['current_lat'] ?? 0);
+                $sLng = floatval($sData['current_lng'] ?? 0);
+                
+                // Calculate Euclidean distance to the pickup point
+                $dist = pow($sLat - $pickupLat, 2) + pow($sLng - $pickupLng, 2);
+                
+                if ($dist < $shortestDistance) {
+                    $shortestDistance = $dist;
+                    $nearestDriverId = $dId;
+                }
+            }
         }
     }
 
-    if (!empty($availableDrivers)) {
-        $randomIndex = array_rand($availableDrivers);
-        $driverId = $availableDrivers[$randomIndex];
+    if ($nearestDriverId) {
+        // Set the driverId to the nearest driver to trigger the hard-assignment below
+        $driverId = $nearestDriverId;
     } else {
         header('Location: bookings_management.php?err=No idle drivers found in Zone ' . $zoneId);
         exit();
@@ -104,7 +131,6 @@ if ($bookingId && $driverId) {
     try {
         $nowStr = date('Y-m-d H:i:s');
         
-        // Link Shuttle
         $driverSnap = $db->collection('Staffs')->document($driverId)->snapshot();
         $shuttleId = $driverSnap->data()['assigned_shuttle_id'] ?? '';
 
