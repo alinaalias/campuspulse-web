@@ -3,28 +3,24 @@ session_start();
 date_default_timezone_set('Asia/Kuala_Lumpur');
 require_once '../../config.php';
 
-// Check auth and role
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
     header('Location: ../../login.php');
     exit;
 }
 
-// ── Phase 1: PHP Data Fetching & Triage Logic ──
 $todayStr = date('Y-m-d');
 $now = time();
 
 $batch = $firestore->bulkWriter();
 $updatesCount = 0;
 
-// === LAZY EXECUTION 1: AUTO-ARCHIVE 15-MIN OVERDUE SCHEDULES ===
 $activeTodaySchedules = $firestore->collection('Schedules')
     ->where('date', '=', $todayStr)
     ->where('status', 'in', ['published', 'active'])
     ->documents();
 
 foreach ($activeTodaySchedules as $doc) {
-    if (!$doc->exists())
-        continue;
+    if (!$doc->exists()) continue;
     $d = $doc->data();
     $schedTime = strtotime($d['date'] . ' ' . $d['departure_time']);
     if ($schedTime > 0 && ($now - $schedTime) > 900) {
@@ -33,7 +29,6 @@ foreach ($activeTodaySchedules as $doc) {
     }
 }
 
-// === LAZY EXECUTION 2: ESCALATE OVERDUE ON-DEMAND TO ADMIN_REVIEW ===
 $pendingBookings = $firestore->collection('Bookings')
     ->where('type', '=', 'ondemand')
     ->where('status', 'in', ['pending', 'searching'])
@@ -43,7 +38,6 @@ foreach ($pendingBookings as $doc) {
     if (!$doc->exists()) continue;
     $d = $doc->data();
     $reqTime = strtotime($d['request_time'] ?? 'now');
-    // If pending for more than 2.5 minutes (150 seconds), escalate to admin_review
     if (($now - $reqTime) > 150) {
         $batch->update($doc->reference(), [['path' => 'status', 'value' => 'admin_review']]);
         $updatesCount++;
@@ -53,14 +47,13 @@ foreach ($pendingBookings as $doc) {
 if ($updatesCount > 0) {
     $batch->flush();
 }
-// ==============================================================
 
-// Fetch Helpers
 $studentsMap = [];
 $studentsIdMap = [];
 $driversMap = [];
 $driversShuttleMap = [];
 $zonesMap = [];
+$routesDataMap = [];
 
 $studentsDocs = $firestore->collection('Students')->documents();
 foreach ($studentsDocs as $doc) {
@@ -85,6 +78,13 @@ foreach ($zonesDocs as $doc) {
     }
 }
 
+$routesDocs = $firestore->collection('Routes')->documents();
+foreach ($routesDocs as $doc) {
+    if ($doc->exists()) {
+        $routesDataMap[$doc->id()] = $doc->data();
+    }
+}
+
 $stops = [];
 foreach ($firestore->collection('Stops')->documents() as $st) {
     $stops[$st->data()['stop_id']] = $st->data()['name'] ?? $st->id();
@@ -94,14 +94,13 @@ $liveRadar = [];
 $futureManifest = [];
 $historyData = [];
 
-// Horizon 1 Data ($liveRadar)
+// Horizon 1 Data 
 $activeOndemandBookings = $firestore->collection('Bookings')
     ->where('type', '=', 'ondemand')
     ->documents();
 
 foreach ($activeOndemandBookings as $doc) {
-    if (!$doc->exists())
-        continue;
+    if (!$doc->exists()) continue;
     $data = $doc->data();
     $data['id'] = $doc->id();
 
@@ -109,8 +108,7 @@ foreach ($activeOndemandBookings as $doc) {
     $data['dropoff_name'] = $data['dropoff_stop_name'] ?? $stops[$data['dropoff_stop_id'] ?? ''] ?? ($data['dropoff_stop_id'] ?? 'Dest');
 
     $status = $data['status'] ?? 'pending';
-    // THE FIX: Include admin_review in the live radar tracking
-    if (in_array($status, ['pending', 'admin_review', 'searching', 'confirmed', 'arriving', 'onboard'])) {
+    if (in_array($status, ['pending', 'admin_review', 'searching', 'confirmed', 'arriving', 'arrived', 'onboard'])) {
         $data['is_overdue'] = false;
         
        if ($status === 'pending' || $status === 'searching') {
@@ -119,7 +117,7 @@ foreach ($activeOndemandBookings as $doc) {
                 $data['is_overdue'] = true;
             }
         } elseif ($status === 'admin_review') {
-            $data['is_overdue'] = true; // Always highlight admin reviews
+            $data['is_overdue'] = true; 
         }
         
         $liveRadar[] = $data;
@@ -129,130 +127,171 @@ foreach ($activeOndemandBookings as $doc) {
 usort($liveRadar, function ($a, $b) {
     $statA = in_array($a['status'], ['pending','searching', 'admin_review']) ? 0 : 1;
     $statB = in_array($b['status'], ['pending','searching', 'admin_review']) ? 0 : 1;
-    if ($statA !== $statB)
-        return $statA - $statB;
+    if ($statA !== $statB) return $statA - $statB;
     return strtotime($a['request_time'] ?? '0') - strtotime($b['request_time'] ?? '0');
 });
 
-// Horizon 2 & 3 Data
-$bookingDocs = $firestore->collection('Bookings')->documents();
-foreach ($bookingDocs as $doc) {
+// Horizon 2 Data
+$upcomingSchedules = $firestore->collection('Schedules')
+    ->where('status', 'in', ['published', 'active'])
+    ->documents();
+
+foreach ($upcomingSchedules as $doc) {
     if (!$doc->exists()) continue;
     $data = $doc->data();
-    $status = strtolower($data['status'] ?? '');
-    $type = strtolower($data['type'] ?? '');
-    if ($type !== 'scheduled') continue;
-    if (!in_array($status, ['completed', 'cancelled', 'missed', 'archived'])) continue;
-    $data['source'] = 'booking';
     $data['id'] = $doc->id();
-    $historyData[] = $data;
+    
+    $manifestList = [];
+    $bookedCount = 0;
+    $schBookings = $firestore->collection('Bookings')->where('schedule_id', '=', $doc->id())->documents();
+    
+    foreach ($schBookings as $bDoc) {
+        if (!$bDoc->exists()) continue;
+        $bData = $bDoc->data();
+        $bStatus = strtolower($bData['status'] ?? '');
+        if (!in_array($bStatus, ['cancelled', 'missed'])) { 
+            $bookedCount++;
+        }
+        $manifestList[] = [
+            'student_name' => $studentsMap[$bData['user_id'] ?? ''] ?? 'Unknown',
+            'student_id' => $studentsIdMap[$bData['user_id'] ?? ''] ?? ($bData['user_id'] ?? '-'),
+            'pickup_stop_name' => $bData['pickup_stop_name'] ?? $stops[$bData['pickup_stop_id'] ?? ''] ?? 'Unknown',
+            'dropoff_stop_name' => $bData['dropoff_stop_name'] ?? $stops[$bData['dropoff_stop_id'] ?? ''] ?? 'Unknown',
+            'status' => $bStatus
+        ];
+    }
+    
+    $dtStr = ($data['date'] ?? '') . ' ' . ($data['departure_time'] ?? '');
+    $data['_sort_ts'] = strtotime($dtStr);
+    
+    if (!$data['_sort_ts'] || $data['_sort_ts'] < $now || $bookedCount === 0) {
+        continue;
+    }
+    
+    $rData = $routesDataMap[$data['route_id'] ?? ''] ?? [];
+    $data['zone_name'] = $zonesMap[$rData['zone_id'] ?? ''] ?? 'N/A';
+    $data['route_name'] = $rData['route_name'] ?? 'Unknown Route';
+
+    $data['manifest_list'] = $manifestList;
+    $data['actual_booked_count'] = $bookedCount;
+    $data['driver_name_resolved'] = $driversMap[$data['driver_id'] ?? ''] ?? 'Unassigned';
+    
+    $futureManifest[] = $data;
 }
 
+usort($futureManifest, function($a, $b) {
+    return ($a['_sort_ts'] ?? 0) <=> ($b['_sort_ts'] ?? 0); 
+});
+
+// Horizon 3 Data
+$ratingsMap = []; 
+$ratingsDocs = $firestore->collection('Ratings')->documents();
+foreach ($ratingsDocs as $rDoc) {
+    if (!$rDoc->exists()) continue;
+    $rd = $rDoc->data();
+    $bId = $rd['booking_id'] ?? null;
+    $ratingVal = floatval($rd['rating'] ?? 0);
+    
+    if ($bId) {
+        $ratingsMap[$bId] = $ratingVal;
+    }
+}
+
+// Process Scheduled Trips 
+$allSchedulesMap = [];
 $scheduleDocs = $firestore->collection('Schedules')->documents();
 foreach ($scheduleDocs as $doc) {
     if (!$doc->exists()) continue;
     $data = $doc->data();
     $status = strtolower($data['status'] ?? '');
-    if (!in_array($status, ['completed', 'cancelled', 'missed', 'archived'])) continue;
-    $data['source'] = 'schedule';
-    $data['id'] = $doc->id();
-    $historyData[] = $data;
-}
-
-$ratingsMap = [];
-$ratingsDocs = $firestore->collection('Ratings')->documents();
-foreach ($ratingsDocs as $rDoc) {
-    if (!$rDoc->exists())
-        continue;
-    $rd = $rDoc->data();
-    $key = $rd['booking_id'] ?? $rd['schedule_id'] ?? null;
-    if ($key) {
-        $ratingsMap[$key] = $rd['rating'] ?? null;
-    }
-}
-
-$scheduledBookingHistoryDocs = $firestore->collection('Bookings')->documents();
-foreach ($scheduledBookingHistoryDocs as $doc) {
-    if (!$doc->exists()) continue;
-    $data = $doc->data();
-    $status = $data['status'] ?? '';
-    if (strtolower($data['type'] ?? '') !== 'scheduled') continue;
-    if (!in_array($status, ['cancelled', 'missed', 'archived'])) continue;
-    $scheduleId = $data['schedule_id'] ?? $doc->id();
-    $data['id'] = $doc->id();
-    $data['display_type'] = 'Scheduled (Booking)';
+    
+    if (!in_array($status, ['completed', 'cancelled', 'missed'])) continue;
+    
+    $scheduleId = $doc->id();
+    $data['id'] = $scheduleId;
+    $data['display_type'] = 'Scheduled Trip';
     $data['driver_name_resolved'] = $driversMap[$data['driver_id'] ?? ''] ?? '-';
-    $data['pickup_name'] = $data['pickup_stop_name'] ?? $stops[$data['pickup_stop_id'] ?? ''] ?? 'Unknown';
-    $data['dropoff_name'] = $data['dropoff_stop_name'] ?? $stops[$data['dropoff_stop_id'] ?? ''] ?? 'Unknown';
-    $data['total_fare'] = floatval($data['fare'] ?? 0);
-    $data['rating'] = $ratingsMap[$scheduleId] ?? null;
-    $data['_sort_ts'] = strtotime($data['booking_time'] ?? $data['request_time'] ?? 'now');
-    $data['manifest_list'] = [[
-        'student_name' => $studentsMap[$data['user_id'] ?? ''] ?? 'Unknown',
-        'user_id' => $studentsIdMap[$data['user_id'] ?? ''] ?? $data['user_id'],
-        'pickup_stop_name' => $data['pickup_name'],
-        'dropoff_stop_name' => $data['dropoff_name'],
-        'status' => $status
-    ]];
-    $historyData[] = $data;
-}
-
-$scheduledHistoryDocs = $firestore->collection('Schedules')->documents();
-foreach ($scheduledHistoryDocs as $doc) {
-    if (!$doc->exists()) continue;
-    $data = $doc->data();
-    $status = $data['status'] ?? '';
-    if ($status !== 'completed') continue;
-    $data['id'] = $doc->id();
-    $data['display_type'] = 'Scheduled';
-    $data['driver_name_resolved'] = $driversMap[$data['driver_id'] ?? ''] ?? '-';
-    $scheduleId = $data['schedule_id'] ?? $doc->id();
+    
+    $rData = $routesDataMap[$data['route_id'] ?? ''] ?? [];
+    $data['route_name'] = $rData['route_name'] ?? 'Unknown Route';
+    
     $totalFare = 0;
     $manifestList = [];
-    $schFareDocs = $firestore->collection('Bookings')
-        ->where('schedule_id', '=', $scheduleId)
-        ->documents();
+    $schedTotalRating = 0;
+    $schedRatingCount = 0;
+    $schFareDocs = $firestore->collection('Bookings')->where('schedule_id', '=', $scheduleId)->documents();
+    
     foreach ($schFareDocs as $fd) {
         if (!$fd->exists()) continue;
         $fData = $fd->data();
+        $fStatus = strtolower($fData['status'] ?? '');
+        $bId = $fd->id();
+        
         $totalFare += floatval($fData['fare'] ?? 0);
         $manifestList[] = [
             'student_name' => $studentsMap[$fData['user_id'] ?? ''] ?? 'Unknown',
             'user_id' => $studentsIdMap[$fData['user_id'] ?? ''] ?? ($fData['user_id'] ?? '-'),
             'pickup_stop_name' => $fData['pickup_stop_name'] ?? $stops[$fData['pickup_stop_id'] ?? ''] ?? 'Unknown',
             'dropoff_stop_name' => $fData['dropoff_stop_name'] ?? $stops[$fData['dropoff_stop_id'] ?? ''] ?? 'Unknown',
-            'status' => $fData['status'] ?? 'unknown'
+            'status' => $fStatus,
+            'cancellation_reason' => $fData['cancellation_reason'] ?? ''
         ];
+        
+        if (isset($ratingsMap[$bId])) {
+            $schedTotalRating += $ratingsMap[$bId];
+            $schedRatingCount++;
+        }
     }
+    
+    if (!empty($data['cancellation_reason'])) {
+        $data['cancellation_reason'] = "Cancelled by Admin: " . $data['cancellation_reason'];
+    }
+    
     $data['total_fare'] = $totalFare;
     $data['manifest_list'] = $manifestList;
-    $data['rating'] = $ratingsMap[$scheduleId] ?? $ratingsMap[$data['id']] ?? null;
+    
+    if ($schedRatingCount > 0) {
+        $data['rating'] = $schedTotalRating / $schedRatingCount;
+    } else {
+        $data['rating'] = null;
+    }
+    
+    $rawTs = ($data['date'] ?? '') . ' ' . ($data['departure_time'] ?? '');
+    $data['_sort_ts'] = trim($rawTs) ? strtotime($rawTs) : 0;
+    
     $historyData[] = $data;
 }
 
+// Process On-Demand History (Removed the limit(60) to ensure accurate history processing)
 $ondemandHistoryDocs = $firestore->collection('Bookings')
     ->where('type', '=', 'ondemand')
-    ->limit(60)
     ->documents();
+    
 foreach ($ondemandHistoryDocs as $doc) {
     if (!$doc->exists()) continue;
     $data = $doc->data();
     $status = $data['status'] ?? '';
+    
     if (!in_array($status, ['completed', 'cancelled', 'missed'])) continue;
+    
     $data['id'] = $doc->id();
     $data['display_type'] = 'On-Demand';
     $uid = $data['user_id'] ?? '';
     $data['student_name_resolved'] = $studentsMap[$uid] ?? 'Unknown';
     $data['student_id_resolved'] = $studentsIdMap[$uid] ?? $uid; 
     $data['driver_name_resolved'] = $driversMap[$data['driver_id'] ?? ''] ?? '-';
+    
     if (empty($data['shuttle_id']) && !empty($data['driver_id'])) {
         $data['shuttle_id'] = $driversShuttleMap[$data['driver_id']] ?? 'Unknown';
     }
+    
     $data['pickup_name'] = $data['pickup_stop_name'] ?? $stops[$data['pickup_stop_id'] ?? ''] ?? 'Current Loc';
     $data['dropoff_name'] = $data['dropoff_stop_name'] ?? $stops[$data['dropoff_stop_id'] ?? ''] ?? 'Dest';
     $data['rating'] = $ratingsMap[$data['id']] ?? null;
+    
     $rawTs = $data['booking_time'] ?? $data['request_time'] ?? null;
     $data['_sort_ts'] = $rawTs ? strtotime($rawTs) : 0;
+    
     $data['manifest_list'] = [[
         'student_name' => $data['student_name_resolved'],
         'user_id' => $data['student_id_resolved'],
@@ -267,12 +306,30 @@ usort($historyData, function ($a, $b) {
     return ($b['_sort_ts'] ?? 0) <=> ($a['_sort_ts'] ?? 0);
 });
 
-// =======================================================
-// CLASH PREVENTION: Fetch Busy Drivers to Filter from List
-// =======================================================
-$busyDrivers = [];
+// Fetch Available Drivers
+$onlineShuttles = [];
+$shuttlesQuery = $firestore->collection('Shuttles')->where('is_online', '=', true)->documents();
+foreach ($shuttlesQuery as $sDoc) {
+    if ($sDoc->exists()) {
+        $onlineShuttles[$sDoc->id()] = $sDoc->data();
+    }
+}
 
-// Drivers currently doing On-Demand
+$driverMapFromShuttle = []; 
+$staffs = $firestore->collection('Staffs')->where('role', '=', 'driver')->documents();
+foreach ($staffs as $stf) {
+    if ($stf->exists()) {
+        $sId = $stf->data()['assigned_shuttle_id'] ?? '';
+        if (!empty($sId)) {
+            $driverMapFromShuttle[$sId] = [
+                'id' => $stf->id(),
+                'name' => $stf->data()['full_name'] ?? 'Unknown'
+            ];
+        }
+    }
+}
+
+$busyDrivers = [];
 $activeJobs = $firestore->collection('Bookings')
     ->where('status', 'in', ['confirmed', 'arriving', 'arrived', 'onboard'])
     ->documents();
@@ -282,7 +339,6 @@ foreach ($activeJobs as $job) {
     }
 }
 
-// Drivers currently doing Scheduled Routes
 $activeScheds = $firestore->collection('Schedules')
     ->where('status', '=', 'active')
     ->documents();
@@ -293,11 +349,17 @@ foreach ($activeScheds as $sched) {
 }
 
 $availableDrivers = [];
-foreach ($driversMap as $did => $dName) {
-    // ONLY append if driver is NOT actively executing a trip
-    if (!in_array($did, $busyDrivers)) {
-        $vehicle = $driversShuttleMap[$did] ?? 'No Vehicle';
-        $availableDrivers[] = ['id' => $did, 'name' => $dName . ' (' . $vehicle . ')'];
+foreach ($onlineShuttles as $shuttleId => $sData) {
+    if (isset($driverMapFromShuttle[$shuttleId])) {
+        $dId = $driverMapFromShuttle[$shuttleId]['id'];
+        $dName = $driverMapFromShuttle[$shuttleId]['name'];
+        
+        if (!in_array($dId, $busyDrivers)) {
+            $availableDrivers[] = [
+                'id' => $dId,
+                'name' => $dName . ' (' . $shuttleId . ')'
+            ];
+        }
     }
 }
 
@@ -703,19 +765,34 @@ include $depth . 'layout/admin/header.php';
         <input type="text" id="globalSearch" class="form-input interaction-target"
             placeholder="Search ID, name, route...">
     </div>
+
     <select id="filterType" class="form-input interaction-target" style="width:160px; flex:none;">
         <option value="">All Types</option>
         <option value="ondemand">On-Demand</option>
         <option value="scheduled">Scheduled</option>
     </select>
+    
     <select id="filterStatus" class="form-input interaction-target" style="width:160px; flex:none;">
         <option value="">All Statuses</option>
-        <option value="pending">Pending</option>
         <option value="completed">Completed</option>
         <option value="cancelled">Cancelled</option>
         <option value="missed">Missed</option>
-        <option value="archived">Archived</option>
     </select>
+
+    <div style="position:relative; width: 42px; height: 42px; flex: none;">
+        <input type="date" id="filterDate" class="interaction-target" 
+               style="position:absolute; width:100%; height:100%; opacity:0; cursor:pointer; z-index:2;" title="Filter by Date">
+        <div id="dateFilterBg" style="position:absolute; width:100%; height:100%; background:#fff; border: 1.5px solid #e2e8f0; border-radius:10px; display:flex; align-items:center; justify-content:center; color:#94a3b8; z-index:1; transition: border-color 0.2s;">
+            <i class="fas fa-calendar-alt" id="dateFilterIcon"></i>
+        </div>
+    </div>
+
+    <input type="hidden" id="sortOrder" value="desc">
+    <button id="sortToggleBtn" class="btn btn-view interaction-target" onclick="toggleSortOrder()" 
+        style="height:42px; padding:0 14px; border-radius:10px; margin:0; box-sizing:border-box; background:#fff; border: 1.5px solid #e2e8f0; color:#334155; cursor:pointer;" title="Toggle Sort Order">
+        <i class="fas fa-sort-amount-down" id="sortIcon"></i>
+    </button>
+
     <button class="btn btn-view interaction-target" onclick="resetMultiFilter()"
         style="height:42px; padding:0 14px; border-radius:10px; margin:0; box-sizing:border-box;" title="Clear Filters">
         <i class="fas fa-undo" style="margin:0;"></i>
@@ -832,8 +909,7 @@ include $depth . 'layout/admin/header.php';
             <tbody>
                 <?php if (empty($futureManifest)): ?>
                     <tr>
-                        <td colspan="5" style="text-align:center; padding:40px; color:#94a3b8;">No future
-                            schedules found.</td>
+                        <td colspan="5" style="text-align:center; padding:40px; color:#94a3b8;">No future schedules found.</td>
                     </tr>
                 <?php else: ?>
                     <?php foreach ($futureManifest as $sch): ?>
@@ -848,14 +924,16 @@ include $depth . 'layout/admin/header.php';
                                 </div>
                             </td>
                             <td>
-                                <strong style="color:var(--primary-blue);"><?= htmlspecialchars($sch['route_id'] ?? 'Unknown') ?></strong>
+                                <strong style="color:var(--primary-blue);"><?= htmlspecialchars($sch['route_id'] ?? 'Unknown') ?> - <?= htmlspecialchars($sch['route_name'] ?? '') ?></strong>
                                 <div style="font-size:0.77rem; color:#64748b; margin-top:3px;">
                                     <i class="fas fa-map-pin"
                                         style="margin-right:3px;"></i><?= htmlspecialchars($sch['zone_name'] ?? 'N/A') ?>
                                 </div>
                             </td>
-                            <td><i class="fas fa-bus"
-                                    style="color:#cbd5e1; margin-right:6px;"></i><?= htmlspecialchars($sch['shuttle_id'] ?? 'Unknown') ?>
+                            <td>
+                                <i class="fas fa-bus" style="color:#cbd5e1; margin-right:6px;"></i><?= htmlspecialchars($sch['shuttle_id'] ?? 'Unknown') ?>
+                                <br>
+                                <span style="font-size:0.75rem; color:#64748b;"><i class="fas fa-id-card" style="margin-right:4px;"></i><?= htmlspecialchars($sch['driver_name_resolved'] ?? 'Unassigned') ?></span>
                             </td>
                             <?php
                             $booked = intval($sch['actual_booked_count'] ?? count($sch['manifest_list'] ?? []));
@@ -956,22 +1034,22 @@ include $depth . 'layout/admin/header.php';
             <tbody>
                 <?php if (empty($historyData)): ?>
                     <tr>
-                        <td colspan="7" style="text-align:center; padding:40px; color:#94a3b8;">No history
-                            records found.</td>
+                        <td colspan="7" style="text-align:center; padding:40px; color:#94a3b8;">No history records found.</td>
                     </tr>
                 <?php else: ?>
                     <?php foreach ($historyData as $row):
                         $status = $row['status'] ?? 'completed';
                         $badgeClass = 'badge-' . strtolower($status);
-                        if (!in_array($badgeClass, ['badge-completed', 'badge-cancelled', 'badge-missed', 'badge-archived']))
+                        if (!in_array($badgeClass, ['badge-completed', 'badge-cancelled', 'badge-missed']))
                             $badgeClass = 'badge-default';
 
                         $isOD = (($row['display_type'] ?? '') === 'On-Demand');
+                        $dateForFilter = date('Y-m-d', $row['_sort_ts']); 
 
                         if ($isOD) {
                             $dispTime = isset($row['booking_time'])
-                                ? date('M d, Y h:i A', strtotime($row['booking_time']))
-                                : (isset($row['request_time']) ? date('M d, Y h:i A', strtotime($row['request_time'])) : 'N/A');
+                                ? date('Y-m-d H:i', strtotime($row['booking_time']))
+                                : (isset($row['request_time']) ? date('Y-m-d H:i', strtotime($row['request_time'])) : 'N/A');
 
                             $studentLabel = htmlspecialchars($row['student_name_resolved'] ?? '-');
                             $studentIdFull = htmlspecialchars($row['student_id_resolved'] ?? '');
@@ -980,19 +1058,53 @@ include $depth . 'layout/admin/header.php';
 
                             $fareDisplay = 'RM ' . number_format(floatval($row['fare'] ?? 0), 2);
                         } else {
-                            $dispTime = ($row['date'] ?? 'N/A') . ' ' . ($row['departure_time'] ?? '');
-                            $details = htmlspecialchars($row['route_id'] ?? 'Unknown Route');
+                            $rawDateTime = ($row['date'] ?? '') . ' ' . ($row['departure_time'] ?? '');
+                            $dispTime = trim($rawDateTime) ? date('Y-m-d H:i', strtotime($rawDateTime)) : 'N/A';
+                            
+                            $details = htmlspecialchars($row['route_id'] ?? '') . ' - ' . htmlspecialchars($row['route_name'] ?? 'Unknown Route');
 
-                            $bookedCount = intval($row['booked_count'] ?? 0);
+                            $bookedCount = 0;
                             $boardedCount = 0;
+                            $ticketHTML = '';
+
                             if (!empty($row['manifest_list'])) {
+                                $bookedCount = count($row['manifest_list']);
                                 foreach ($row['manifest_list'] as $m) {
                                     if (in_array(strtolower($m['status']), ['onboard', 'completed'])) {
                                         $boardedCount++;
                                     }
+                                    $tStatusClass = 'badge-' . strtolower($m['status']);
+                                    if(!in_array($tStatusClass, ['badge-completed', 'badge-cancelled', 'badge-missed'])) $tStatusClass = 'badge-default';
+                                    
+                                    $tName = htmlspecialchars($m['student_name']);
+                                    $tStatus = ucfirst($m['status']);
+                                    
+                                    $tReason = ($m['status'] === 'cancelled' && !empty($m['cancellation_reason'])) 
+                                        ? '<div style="color:#ef4444; font-size:0.7rem; margin-top:2px;">Reason: '.htmlspecialchars($m['cancellation_reason']).'</div>' 
+                                        : '';
+                                    
+                                    $ticketHTML .= "<div style='border-bottom: 1px solid #e2e8f0; padding: 6px 0;'>
+                                        <div style='display:flex; justify-content:space-between; align-items:center;'>
+                                            <strong>{$tName}</strong>
+                                            <span class='badge {$tStatusClass}' style='font-size:0.6rem; padding:2px 6px;'>{$tStatus}</span>
+                                        </div>
+                                        {$tReason}
+                                    </div>";
                                 }
                             }
+                            
                             $detailsSub = $bookedCount . ' Booked, ' . $boardedCount . ' Boarded';
+                            
+                            if ($ticketHTML !== '') {
+                                $detailsSub .= "
+                                <details style='margin-top: 8px; background: #f8fafc; padding: 6px 10px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 0.8rem;'>
+                                    <summary style='cursor: pointer; font-weight: 600; color: var(--primary-blue); outline: none;'>View Student Bookings</summary>
+                                    <div style='margin-top: 6px;'>
+                                        {$ticketHTML}
+                                    </div>
+                                </details>";
+                            }
+
                             $fareDisplay = 'RM ' . number_format(floatval($row['total_fare'] ?? 0), 2) . ' <span style="font-size:0.72rem; color:#94a3b8;">(total)</span>';
                         }
 
@@ -1002,10 +1114,17 @@ include $depth . 'layout/admin/header.php';
                         } else {
                             $ratingHtml = '<span style="color:#cbd5e1;">Unrated</span>';
                         }
+                        
+                        $cancellationHtml = '';
+                        if (strtolower($status) === 'cancelled' && !empty($row['cancellation_reason'])) {
+                            $cancellationHtml = '<div style="font-size:0.7rem; color:#ef4444; margin-top:4px; max-width:180px; white-space:normal; line-height:1.2;">Reason: ' . htmlspecialchars($row['cancellation_reason']) . '</div>';
+                        }
+                        
                         $tripDataJson = htmlspecialchars(json_encode($row), ENT_QUOTES, 'UTF-8');
                         ?>
+                        
                         <tr class="history-row searchable-row" data-type="<?= $isOD ? 'ondemand' : 'scheduled' ?>"
-                            data-status="<?= strtolower($status) ?>">
+                            data-status="<?= strtolower($status) ?>" data-date="<?= $dateForFilter ?>" data-ts="<?= $row['_sort_ts'] ?>">
                             <td style="color:#64748b; font-size:0.82rem; white-space:nowrap;"><?= $dispTime ?></td>
                             <td>
                                 <?php if ($isOD): ?>
@@ -1051,15 +1170,12 @@ include $depth . 'layout/admin/header.php';
                                             $statusIcon = 'fa-clock';
                                             $statusTooltip = 'System Failed: Time expired before a driver could execute it.';
                                             break;
-                                        case 'archived':
-                                            $statusIcon = 'fa-archive';
-                                            $statusTooltip = 'Cleaned Up: Old record retained for database history.';
-                                            break;
                                     }
                                 ?>
                                 <span class="badge <?= $badgeClass ?>" title="<?= $statusTooltip ?>" style="cursor: help; display: inline-flex; align-items: center; gap: 4px;">
                                     <i class="fas <?= $statusIcon ?>"></i> <?= ucfirst($status) ?>
                                 </span>
+                                <?= $cancellationHtml ?>
                             </td>
                             <td style="white-space:nowrap;">
                                 <div style="font-weight:700; color:#0f172a; font-size:0.9rem;"><?= $fareDisplay ?></div>
@@ -1112,7 +1228,6 @@ include $depth . 'layout/admin/header.php';
 </div>
 
 <script>
-    // ── Globals & Tab Logic ──
     function switchHorizon(tabId) {
         document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
         document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
@@ -1124,7 +1239,6 @@ include $depth . 'layout/admin/header.php';
         localStorage.setItem('adminDispatchActiveTab', tabId);
     }
 
-    // ── Modal Logic ──
     function openModal(id) { document.getElementById(id).style.display = 'flex'; }
     function closeModal(id) { document.getElementById(id).style.display = 'none'; }
     window.onclick = function (event) {
@@ -1133,7 +1247,6 @@ include $depth . 'layout/admin/header.php';
         }
     }
 
-    // ── Trip Details Modal & Universal CSV Export ──
     let currentTripData = null;
 
     function openLogsModal(tripData) {
@@ -1141,16 +1254,6 @@ include $depth . 'layout/admin/header.php';
         const logsData = tripData.trip_logs || [];
         const timeline = document.getElementById('logsTimeline');
         timeline.innerHTML = '';
-
-        // NEW: Display Cancellation Reason if it exists
-        if ((tripData.status === 'cancelled' || tripData.status === 'Cancelled') && tripData.cancellation_reason) {
-            timeline.innerHTML += `
-                <div style="background-color: #fef2f2; color: #b91c1c; padding: 12px 16px; border-radius: 8px; border: 1px solid #fca5a5; margin-bottom: 20px; font-size: 0.9rem;">
-                    <strong><i class="fas fa-exclamation-triangle" style="margin-right: 6px;"></i>Cancellation Reason:</strong><br>
-                    <span style="margin-top:4px; display:block;">${tripData.cancellation_reason}</span>
-                </div>
-            `;
-        }
 
         if (logsData.length === 0) {
             timeline.innerHTML += '<p style="text-align:center; color:#94a3b8; padding:30px;">No timeline logs recorded for this trip.</p>';
@@ -1241,9 +1344,8 @@ include $depth . 'layout/admin/header.php';
         URL.revokeObjectURL(url);
     }
 
-    // ── Pagination (History & Logs) ──
-    const historyRows = Array.from(document.querySelectorAll('.history-row'));
-    const rowsPerPage = 15;
+    let historyRows = Array.from(document.querySelectorAll('.history-row'));
+    const rowsPerPage = 30; 
     let currentPage = 1;
     let visibleRows = historyRows;
 
@@ -1280,13 +1382,26 @@ include $depth . 'layout/admin/header.php';
         showPage(currentPage + delta);
     }
 
-    // ── Multi-Filter Logic ──
+    function toggleSortOrder() {
+        const sortInput = document.getElementById('sortOrder');
+        const sortIcon = document.getElementById('sortIcon');
+        if (sortInput.value === 'desc') {
+            sortInput.value = 'asc';
+            sortIcon.className = 'fas fa-sort-amount-up';
+        } else {
+            sortInput.value = 'desc';
+            sortIcon.className = 'fas fa-sort-amount-down';
+        }
+        applyFilters();
+    }
+
     function applyFilters() {
         const term = document.getElementById('globalSearch').value.toLowerCase().trim();
         const typeFilter = document.getElementById('filterType').value.toLowerCase();
         const statusFilter = document.getElementById('filterStatus').value.toLowerCase();
+        const dateFilter = document.getElementById('filterDate').value;
+        const sortOrder = document.getElementById('sortOrder').value;
 
-        // Filter Horizon 1
         document.querySelectorAll('.dispatch-card').forEach(card => {
             const cardType = card.getAttribute('data-type') || '';
             const cardStatus = card.getAttribute('data-status') || '';
@@ -1298,7 +1413,6 @@ include $depth . 'layout/admin/header.php';
             card.style.display = (matchTerm && matchType && matchStatus) ? 'flex' : 'none';
         });
 
-        // Filter Horizon 2
         document.querySelectorAll('#horizon2 .searchable-row').forEach(row => {
             const rowType = row.getAttribute('data-type') || '';
             const rowStatus = row.getAttribute('data-status') || '';
@@ -1310,33 +1424,65 @@ include $depth . 'layout/admin/header.php';
             row.style.display = (matchTerm && matchType && matchStatus) ? 'table-row' : 'none';
         });
 
-        // Filter Horizon 3
         visibleRows = historyRows.filter(row => {
             const rowType = row.getAttribute('data-type') || '';
             const rowStatus = row.getAttribute('data-status') || '';
+            const rowDate = row.getAttribute('data-date') || '';
 
             const matchTerm = row.textContent.toLowerCase().includes(term);
             const matchType = typeFilter === '' || rowType === typeFilter;
             const matchStatus = statusFilter === '' || rowStatus === statusFilter;
+            const matchDate = dateFilter === '' || rowDate === dateFilter;
 
-            return matchTerm && matchType && matchStatus;
+            return matchTerm && matchType && matchStatus && matchDate;
         });
+
+        visibleRows.sort((a, b) => {
+            const tsA = parseInt(a.getAttribute('data-ts'));
+            const tsB = parseInt(b.getAttribute('data-ts'));
+            return sortOrder === 'desc' ? (tsB - tsA) : (tsA - tsB);
+        });
+
+        const tbody = document.querySelector('#historyTable tbody');
+        visibleRows.forEach(row => tbody.appendChild(row));
+
         currentPage = 1;
         showPage(1);
     }
 
     function resetMultiFilter() {
         document.getElementById('globalSearch').value = '';
+        
+        document.getElementById('filterDate').value = '';
+        document.getElementById('dateFilterIcon').style.color = '#94a3b8';
+        document.getElementById('dateFilterBg').style.borderColor = '#e2e8f0';
+
         document.getElementById('filterType').value = '';
         document.getElementById('filterStatus').value = '';
+        
+        document.getElementById('sortOrder').value = 'desc';
+        document.getElementById('sortIcon').className = 'fas fa-sort-amount-down';
+        
         applyFilters();
     }
 
     document.getElementById('globalSearch').addEventListener('keyup', applyFilters);
     document.getElementById('filterType').addEventListener('change', applyFilters);
     document.getElementById('filterStatus').addEventListener('change', applyFilters);
+    
+    document.getElementById('filterDate').addEventListener('change', function() {
+        const icon = document.getElementById('dateFilterIcon');
+        const bg = document.getElementById('dateFilterBg');
+        if (this.value) {
+            icon.style.color = 'var(--primary-blue)';
+            bg.style.borderColor = 'var(--primary-blue)';
+        } else {
+            icon.style.color = '#94a3b8';
+            bg.style.borderColor = '#e2e8f0';
+        }
+        applyFilters();
+    });
 
-    // ── Global Auto-Refresh (30s) & State Preservation ──
     let isInteracting = false;
     document.querySelectorAll('input, select, button, form, .interaction-target, .modal-overlay, .modal-content').forEach(el => {
         el.addEventListener('focus', () => isInteracting = true);
@@ -1346,28 +1492,69 @@ include $depth . 'layout/admin/header.php';
         el.addEventListener('change', () => isInteracting = true);
     });
 
-    // Save state exactly before the browser refreshes
     window.addEventListener('beforeunload', () => {
         sessionStorage.setItem('cp_scrollPos', window.scrollY);
         sessionStorage.setItem('cp_search', document.getElementById('globalSearch').value);
+        sessionStorage.setItem('cp_date', document.getElementById('filterDate').value);
         sessionStorage.setItem('cp_type', document.getElementById('filterType').value);
         sessionStorage.setItem('cp_status', document.getElementById('filterStatus').value);
+        sessionStorage.setItem('cp_sort', document.getElementById('sortOrder').value);
     });
 
+    // REAL-TIME REFRESH
     setInterval(() => {
         const anyModalOpen = Array.from(document.querySelectorAll('.modal-overlay')).some(m => m.style.display === 'flex');
         if (!isInteracting && !anyModalOpen) {
-            window.location.reload();
+            fetch(window.location.href)
+                .then(res => {
+                    if (!res.ok) throw new Error("HTTP " + res.status);
+                    return res.text();
+                })
+                .then(html => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    
+                    const newH1 = doc.getElementById('horizon1');
+                    const newH2 = doc.getElementById('horizon2');
+                    const newH3 = doc.getElementById('horizon3');
+                    
+                    if (newH1 && newH2 && newH3) {
+                        document.getElementById('horizon1').innerHTML = newH1.innerHTML;
+                        document.getElementById('horizon2').innerHTML = newH2.innerHTML;
+                        document.getElementById('horizon3').innerHTML = newH3.innerHTML;
+                        
+                        historyRows = Array.from(document.querySelectorAll('.history-row'));
+                        visibleRows = historyRows;
+                        
+                        applyFilters();
+                        
+                        document.querySelectorAll('input, select, button, form, .interaction-target, .modal-overlay, .modal-content').forEach(el => {
+                            el.addEventListener('focus', () => isInteracting = true);
+                            el.addEventListener('blur', () => isInteracting = false);
+                            el.addEventListener('mouseover', () => isInteracting = true);
+                            el.addEventListener('mouseout', () => isInteracting = false);
+                            el.addEventListener('change', () => isInteracting = true);
+                        });
+                    }
+                })
+                .catch(err => console.error("Silent sync failed", err));
         }
-    }, 30000);
+    }, 5000); 
 
-    // ── Init (Restore State) ──
     document.addEventListener('DOMContentLoaded', () => {
         visibleRows = historyRows;
         
-        // Restore Filters
         const savedSearch = sessionStorage.getItem('cp_search');
         if (savedSearch !== null) document.getElementById('globalSearch').value = savedSearch;
+
+        const savedDate = sessionStorage.getItem('cp_date');
+        if (savedDate !== null) {
+            document.getElementById('filterDate').value = savedDate;
+            if (savedDate !== '') {
+                document.getElementById('dateFilterIcon').style.color = 'var(--primary-blue)';
+                document.getElementById('dateFilterBg').style.borderColor = 'var(--primary-blue)';
+            }
+        }
 
         const savedType = sessionStorage.getItem('cp_type');
         if (savedType !== null) document.getElementById('filterType').value = savedType;
@@ -1375,9 +1562,16 @@ include $depth . 'layout/admin/header.php';
         const savedStatus = sessionStorage.getItem('cp_status');
         if (savedStatus !== null) document.getElementById('filterStatus').value = savedStatus;
 
-        applyFilters(); // Apply the restored filters to the tables
+        const savedSort = sessionStorage.getItem('cp_sort');
+        if (savedSort !== null) {
+            document.getElementById('sortOrder').value = savedSort;
+            if (savedSort === 'asc') {
+                document.getElementById('sortIcon').className = 'fas fa-sort-amount-up';
+            }
+        }
 
-        // Restore Scroll Position seamlessly
+        applyFilters(); 
+
         const scrollPos = sessionStorage.getItem('cp_scrollPos');
         if (scrollPos) {
             window.scrollTo(0, parseInt(scrollPos));
