@@ -4,34 +4,41 @@
 function toggleStatus() {
     const dot = document.getElementById('statusDot');
     const text = document.getElementById('statusText');
-    const isOnline = text.innerText.toUpperCase() === 'ONLINE';
+    const isCurrentlyOnline = text.innerText.toUpperCase() === 'ONLINE';
 
     // Optimistically update UI
-    const newStatus = isOnline ? 'OFFLINE' : 'ONLINE';
+    const newStatus = isCurrentlyOnline ? 'OFFLINE' : 'ONLINE';
     text.innerText = newStatus;
-    text.style.color = isOnline ? 'white' : '#2ecc71';
+    text.style.color = isCurrentlyOnline ? 'white' : '#2ecc71';
 
-    dot.style.background = isOnline ? '#bdc3c7' : '#2ecc71';
-    dot.style.boxShadow = isOnline ? 'none' : '0 0 8px #2ecc71';
+    dot.style.background = isCurrentlyOnline ? '#bdc3c7' : '#2ecc71';
+    dot.style.boxShadow = isCurrentlyOnline ? 'none' : '0 0 8px #2ecc71';
 
     const pill = text.closest('.status-pill');
     if (pill) {
-        pill.style.background = isOnline ? 'rgba(255,255,255,0.15)' : 'rgba(46, 204, 113, 0.15)';
-        pill.style.border = isOnline ? '1px solid rgba(255,255,255,0.2)' : '1px solid rgba(46, 204, 113, 0.3)';
+        pill.style.background = isCurrentlyOnline ? 'rgba(255,255,255,0.15)' : 'rgba(46, 204, 113, 0.15)';
+        pill.style.border = isCurrentlyOnline ? '1px solid rgba(255,255,255,0.2)' : '1px solid rgba(46, 204, 113, 0.3)';
     }
 
     const offlineCard = document.getElementById('offline-card');
     const scanningCard = document.getElementById('scanning-card');
     if (offlineCard && scanningCard) {
-        if (!isOnline) {
-            offlineCard.style.display = 'none';
-            scanningCard.style.display = 'block';
-        } else {
+        if (isCurrentlyOnline) { // Switching to Offline
             offlineCard.style.display = 'block';
             scanningCard.style.display = 'none';
             const pingContainer = document.getElementById('pinging-card-container');
             if (pingContainer) pingContainer.innerHTML = '';
+        } else { // Switching to Online
+            offlineCard.style.display = 'none';
+            scanningCard.style.display = 'block';
         }
+    }
+
+    // FIX: Start/Stop GPS Tracking Immediately without needing a refresh!
+    if (isCurrentlyOnline) {
+        if (typeof stopGpsBroadcast === 'function') stopGpsBroadcast();
+    } else {
+        if (typeof startGpsBroadcast === 'function') startGpsBroadcast();
     }
 
     // Ping the backend to sync Driver AND Shuttle simultaneously
@@ -418,6 +425,9 @@ function startGpsBroadcast() {
         return;
     }
 
+    // Prevent multiple overlapping trackers
+    if (gpsWatchId !== null) return;
+
     gpsWatchId = navigator.geolocation.watchPosition(
         (position) => {
             const now = Date.now();
@@ -433,15 +443,25 @@ function startGpsBroadcast() {
                     last_updated: firebase.firestore.FieldValue.serverTimestamp()
                 }, { merge: true }).then(() => {
                     lastGpsUpdateObj = Date.now();
-                    console.log("GPS heartbeat sent.");
+                    console.log("GPS heartbeat sent. Coords:", position.coords.latitude, position.coords.longitude);
                 }).catch(err => console.error("Error sending heartbeat:", err));
             }
         },
         (error) => {
-            console.warn("GPS watch error:", error);
+            console.warn("GPS watch error:", error.message);
         },
-        { enableHighAccuracy: true }
+        // Added stricter accuracy requirements for mobile devices
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 } 
     );
+}
+
+// NEW: Function to kill the GPS tracker when driver goes offline
+function stopGpsBroadcast() {
+    if (gpsWatchId !== null && navigator.geolocation) {
+        navigator.geolocation.clearWatch(gpsWatchId);
+        gpsWatchId = null;
+        console.log("GPS heartbeat stopped.");
+    }
 }
 
 document.addEventListener("DOMContentLoaded", function () {
