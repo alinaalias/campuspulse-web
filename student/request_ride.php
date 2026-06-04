@@ -45,7 +45,7 @@ function haversineDistance($lat1, $lon1, $lat2, $lon2)
 try {
     $db = $firestore;
 
-    // Fetch Pickup Coordinates
+    // Fetch Pickup Coordinates AND Zone ID
     $pickupSnap = $db->collection('Stops')->document($pickupStopId)->snapshot();
 
     if (!$pickupSnap->exists()) {
@@ -54,87 +54,122 @@ try {
     }
 
     $pickupData = $pickupSnap->data();
-    $pickupLat = $pickupData['lat'] ?? null;
-    $pickupLng = $pickupData['lng'] ?? null;
+    $pickupLat = floatval($pickupData['lat'] ?? 0);
+    $pickupLng = floatval($pickupData['lng'] ?? 0);
+    $zoneIds = $pickupData['zone_ids'] ?? [];
+    $zoneId = !empty($zoneIds) ? $zoneIds[0] : null;
 
-    if ($pickupLat === null || $pickupLng === null) {
-        echo json_encode(['success' => false, 'message' => 'Coordinates for the pickup location are unavailable.']);
+    if (!$zoneId || $pickupLat === 0) {
+        echo json_encode(['success' => false, 'message' => 'Location data incomplete. Cannot assign driver.']);
         exit();
     }
 
-    // Phase 2: The Spatial Scan (Filtering Shuttles)
-    // 1. is_online == true
-    // 2. job_status == 'Idle'
-    $shuttlesQuery = $db->collection('Shuttles')
-        ->where('is_online', '=', true)
-        ->where('job_status', '=', 'idle')
-        ->documents();
+    // Phase 2: Secure Spatial Scan (Find Nearest Available Driver in the SAME Zone)
+    $onlineShuttles = [];
+    $shuttlesQuery = $db->collection('Shuttles')->where('is_online', '=', true)->documents();
+    
+    foreach ($shuttlesQuery as $sDoc) {
+        if (!$sDoc->exists()) continue;
+        $sData = $sDoc->data();
+        
+        // Filter in PHP memory to avoid Firebase Composite Index crashes
+        $sZone = $sData['zone_id'] ?? '';
+        $sJobStatus = strtolower($sData['job_status'] ?? '');
+        $sStatus = strtolower($sData['status'] ?? '');
+        
+        if ($sZone === $zoneId && $sJobStatus === 'idle' && $sStatus === 'active') {
+            $onlineShuttles[$sDoc->id()] = $sData;
+        }
+    }
+
+    $driverMap = []; 
+    $staffs = $db->collection('Staffs')->where('role', '=', 'driver')->documents();
+    foreach ($staffs as $stf) {
+        if ($stf->exists()) {
+            $sId = $stf->data()['assigned_shuttle_id'] ?? '';
+            if (!empty($sId)) $driverMap[$sId] = $stf->id();
+        }
+    }
+
+    $busyDrivers = [];
+    $activeJobs = $db->collection('Bookings')->where('status', 'in', ['confirmed', 'arriving', 'arrived', 'onboard'])->documents();
+    foreach ($activeJobs as $job) {
+        if (!empty($job->data()['driver_id'])) $busyDrivers[] = $job->data()['driver_id'];
+    }
+    
+    $activeScheds = $db->collection('Schedules')->where('status', '=', 'active')->documents();
+    foreach ($activeScheds as $sched) {
+        if (!empty($sched->data()['driver_id'])) $busyDrivers[] = $sched->data()['driver_id'];
+    }
 
     $closestShuttleId = null;
+    $candidateDriverId = null;
     $shortestDistance = PHP_FLOAT_MAX;
 
-    foreach ($shuttlesQuery as $shuttle) {
-        $shuttleData = $shuttle->data();
-        $shuttleLat = $shuttleData['current_lat'] ?? null;
-        $shuttleLng = $shuttleData['current_lng'] ?? null;
-
-        if ($shuttleLat !== null && $shuttleLng !== null) {
-            $dist = haversineDistance($pickupLat, $pickupLng, $shuttleLat, $shuttleLng);
-
-            if ($dist < $shortestDistance) {
-                $shortestDistance = $dist;
-                $closestShuttleId = $shuttle->id();
+    foreach ($onlineShuttles as $shuttleId => $sData) {
+        if (isset($driverMap[$shuttleId])) {
+            $dId = $driverMap[$shuttleId];
+            if (!in_array($dId, $busyDrivers)) {
+                $sLat = floatval($sData['current_lat'] ?? 0);
+                $sLng = floatval($sData['current_lng'] ?? 0);
+                
+                $dist = haversineDistance($pickupLat, $pickupLng, $sLat, $sLng);
+                if ($dist < $shortestDistance) {
+                    $shortestDistance = $dist;
+                    $closestShuttleId = $shuttleId;
+                    $candidateDriverId = $dId;
+                }
             }
         }
     }
 
-    // Fallback: If no shuttles matched or returned a valid distance
-    if (!$closestShuttleId) {
-        echo json_encode(['success' => false, 'message' => 'No shuttles currently available.']);
-        exit();
-    }
-
     // Phase 4: Driver Resolution & Booking Injection
-    $staffQuery = $db->collection('Staffs')
-        ->where('role', '=', 'driver')
-        ->where('assigned_shuttle_id', '=', $closestShuttleId)
-        ->where('duty_status', '=', 'online')
-        ->limit(1)
-        ->documents();
-
-    $candidateDriverId = null;
-    foreach ($staffQuery as $staff) {
-        $candidateDriverId = $staff->id();
-    }
-
-    if (!$candidateDriverId) {
-        echo json_encode(['success' => false, 'message' => 'Target shuttle found but driver is marked offline. No drivers available.']);
-        exit();
-    }
-
-    // Generate Booking Payload
     $bookingId = 'BOOK' . strtoupper(uniqid());
-
-    $db->collection('Bookings')->document($bookingId)->set([
-        'booking_id' => $bookingId,
-        'user_id' => $userId,
-        'type' => 'ondemand',
-        'pickup_stop_id' => $pickupStopId,
-        'dropoff_stop_id' => $dropoffStopId,
-        'candidate_driver_id' => $candidateDriverId,
-        'shuttle_id' => $closestShuttleId,
-        'status' => 'searching',  // Crucial trigger for the driver's UI onSnapshot listener
-        'created_at' => date('Y-m-d H:i:s')
-    ]);
-
-    // Success Output
-    echo json_encode([
-        'success' => true,
-        'message' => 'Matchmaking successful. Finding driver...',
-        'booking_id' => $bookingId,
-        'distance_m' => round($shortestDistance),
-        'shuttle_id' => $closestShuttleId
-    ]);
+    $nowStr = date('Y-m-d H:i:s');
+    
+    if ($closestShuttleId && $candidateDriverId) {
+        // Driver found! Ping them immediately.
+        $db->collection('Bookings')->document($bookingId)->set([
+            'booking_id' => $bookingId,
+            'user_id' => $userId,
+            'type' => 'ondemand',
+            'zone_id' => $zoneId,
+            'pickup_stop_id' => $pickupStopId,
+            'dropoff_stop_id' => $dropoffStopId,
+            'candidate_driver_id' => $candidateDriverId,
+            'shuttle_id' => $closestShuttleId,
+            'status' => 'searching', // Triggers driver UI
+            'request_time' => $nowStr,
+            'created_at' => $nowStr,
+            'fare' => 1.50 
+        ]);
+        
+        echo json_encode([
+            'success' => true,
+            'message' => 'Matchmaking successful. Pinging nearest driver...',
+            'booking_id' => $bookingId
+        ]);
+    } else {
+        // No driver available right now. Queue it up as pending so Admin sees it!
+        $db->collection('Bookings')->document($bookingId)->set([
+            'booking_id' => $bookingId,
+            'user_id' => $userId,
+            'type' => 'ondemand',
+            'zone_id' => $zoneId,
+            'pickup_stop_id' => $pickupStopId,
+            'dropoff_stop_id' => $dropoffStopId,
+            'status' => 'pending', 
+            'request_time' => $nowStr,
+            'created_at' => $nowStr,
+            'fare' => 1.50 
+        ]);
+        
+        echo json_encode([
+            'success' => true,
+            'message' => 'Added to queue. Waiting for an available driver.',
+            'booking_id' => $bookingId
+        ]);
+    }
 
 } catch (Exception $e) {
     echo json_encode(['success' => false, 'message' => 'Backend synchronization error: ' . $e->getMessage()]);
