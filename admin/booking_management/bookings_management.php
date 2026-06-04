@@ -741,6 +741,17 @@ include $depth . 'layout/admin/header.php';
     .tl-detail { font-size: 0.75rem; color: #64748b; margin-top: 2px; font-weight: 600; text-transform: uppercase; }
     .btn-logs { background: #f8fafc; color: #475569; border: 1px solid #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 0.78rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; transition: 0.2s; }
     .btn-logs:hover { background: #e2e8f0; }
+     input[type="date"].interaction-target::-webkit-calendar-picker-indicator {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+        margin: 0;
+        padding: 0;
+    }
 </style>
 
 <h2 class="page-title">
