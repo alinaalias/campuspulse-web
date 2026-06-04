@@ -632,16 +632,23 @@ include $depth . 'layout/admin/header.php';
                         zIndex: isOnline ? 100 : 50
                     });
 
-                    fleetMarkers[id].isOnline = isOnline;
-
                     imgDiv.addEventListener('click', () => {
-
                         activeInfoWindowShuttleId = id;
                         sessionStorage.setItem('activeInfoWindowShuttleId', id);
+                        infoWindow.setContent(fleetMarkers[id].latestHtml); // Pull the fresh HTML
+                        infoWindow.open(map, fleetMarkers[id]);
+                    });
 
-                        const zName = zonesData[data.zone_id] ? zonesData[data.zone_id].name : 'Unassigned';
+                } else {
+                    fleetMarkers[id].position = pos;
+                    fleetMarkers[id].content.style.opacity = isOnline ? '1.0' : '0.5';
+                    fleetMarkers[id].zIndex = isOnline ? 100 : 50;
+                }
 
-                        infoWindow.setContent(`
+                fleetMarkers[id].isOnline = isOnline;
+
+                const zName = zonesData[data.zone_id] ? zonesData[data.zone_id].name : 'Unassigned';
+                fleetMarkers[id].latestHtml = `
                     <div class="infowindow-content">
                         <div class="iw-header">
                             <h4 class="iw-title">Shuttle ${id}</h4>
@@ -655,41 +662,16 @@ include $depth . 'layout/admin/header.php';
                             <div><i class="fas fa-map-marked-alt"></i> <b>Zone:</b> ${zName}</div>
                         </div>
                     </div>
-                `);
+                `;
 
-                        infoWindow.open(map, fleetMarkers[id]);
-                    });
-
-                } else {
-                    fleetMarkers[id].position = pos;
-                    fleetMarkers[id].content.style.opacity = isOnline ? '1.0' : '0.5';
-                    fleetMarkers[id].zIndex = isOnline ? 100 : 50;
-                    fleetMarkers[id].isOnline = isOnline;
+                // FIX: If the admin currently has THIS shuttle's popup open, update the text live!
+                if (activeInfoWindowShuttleId === id) {
+                    infoWindow.setContent(fleetMarkers[id].latestHtml);
                 }
 
                 const activeOnly = document.getElementById('toggleActiveOnly').checked;
                 fleetMarkers[id].map = (activeOnly && !isOnline) ? null : map;
 
-                // ─────────────────────────────────────────────
-                // FIX: Auto reopen InfoWindow after refresh
-                // ─────────────────────────────────────────────
-                const savedId = sessionStorage.getItem('activeInfoWindowShuttleId');
-
-                if (savedId === id && fleetMarkers[id]) {
-                    setTimeout(() => {
-                        // simulate click ONLY after marker is ready
-                        const markerContent = fleetMarkers[id].content;
-
-                        if (markerContent) {
-                            markerContent.dispatchEvent(
-                                new MouseEvent('click', {
-                                    bubbles: true,
-                                    cancelable: true
-                                })
-                            );
-                        }
-                    }, 800);
-                }
             });
         });
 
@@ -712,7 +694,7 @@ include $depth . 'layout/admin/header.php';
                     const isResolved = data.status === 'resolved';
 
                     if (!isEmergency && !isWarning && !isDriverReport && !isResolved) {
-                        return; // Skip standard info broadcasts
+                        return; 
                     }
 
                     visibleCount++;
@@ -908,12 +890,6 @@ include $depth . 'layout/admin/header.php';
 
     window.addEventListener('beforeunload', savePageState);
 
-    setInterval(() => {
-        if (!isInteracting) {
-            savePageState();
-            window.location.reload();
-        }
-    }, 15000);
 </script>
 <script async defer
     src="https://maps.googleapis.com/maps/api/js?key=<?= MAPS_API_KEY ?>&libraries=marker&callback=initMap&loading=async"></script>
