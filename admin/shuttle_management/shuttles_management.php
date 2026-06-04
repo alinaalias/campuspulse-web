@@ -326,10 +326,14 @@ include $depth . 'layout/admin/header.php';
 </div>
 
 <div class="card" style="margin-bottom: 25px; padding: 0; overflow: hidden; border: 1px solid #e0e0e0;">
-    <div
-        style="padding: 15px 20px; background: #fafafa; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 10px;">
-        <i class="fas fa-boxes" style="color: var(--primary-blue); font-size: 1.2rem;"></i>
-        <h3 style="margin: 0; font-size: 1.1rem; color: #333; font-weight: 600;">Inventory Map</h3>
+    <div style="padding: 15px 20px; background: #fafafa; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <i class="fas fa-boxes" style="color: var(--primary-blue); font-size: 1.2rem;"></i>
+            <h3 style="margin: 0; font-size: 1.1rem; color: #333; font-weight: 600;">Inventory Map</h3>
+        </div>
+        <select id="mapShuttleSearch" onchange="focusMapShuttle(this.value)" class="interaction-target" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #cbd5e1; font-family: 'Poppins', sans-serif; font-size: 0.85rem; outline: none; cursor:pointer; max-width: 180px;">
+            <option value="">-- Locate Shuttle --</option>
+        </select>
     </div>
     <div id="fleetRadarMap"
         style="width: 100%; height: 400px; background: #eaebed; display: flex; justify-content: center; align-items: center;">
@@ -713,6 +717,7 @@ include $depth . 'layout/admin/header.php';
     let map;
     const fleetMarkers = {};
     let infoWindow;
+    let activeInfoWindowShuttleId = null; // Tracks which popup is currently open
 
     const firebaseConfig = {
         apiKey: "<?= MAPS_API_KEY ?>",
@@ -785,15 +790,21 @@ include $depth . 'layout/admin/header.php';
                         badgeHtml = '<span style="background:#2ecc71; color:white; padding: 2px 6px; border-radius:10px; font-size:0.75rem;">ONLINE</span>';
                     }
 
+                    // Populate Map Search Dropdown
+                    const searchSelect = document.getElementById('mapShuttleSearch');
+                    if (searchSelect && !Array.from(searchSelect.options).some(opt => opt.value === doc.id)) {
+                        const opt = document.createElement('option');
+                        opt.value = doc.id;
+                        opt.text = doc.id;
+                        searchSelect.appendChild(opt);
+                    }
+
                     if (!fleetMarkers[doc.id]) {
-                        const markerElement = document.createElement('div');
-                        markerElement.style.width = '16px';
-                        markerElement.style.height = '16px';
-                        markerElement.style.backgroundColor = fillColor;
-                        markerElement.style.border = '2px solid #ffffff';
-                        markerElement.style.borderRadius = '50%';
+                        const markerElement = document.createElement('img');
+                        markerElement.src = "../../img/van.png";
+                        markerElement.style.width = "40px";
+                        markerElement.style.height = "40px";
                         markerElement.style.opacity = opacity;
-                        markerElement.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
                         markerElement.style.cursor = 'pointer';
 
                         const marker = new google.maps.marker.AdvancedMarkerElement({
@@ -804,46 +815,49 @@ include $depth . 'layout/admin/header.php';
                         });
 
                         markerElement.addEventListener('click', () => {
-                            const navUrl = `https://www.google.com/maps/dir/?api=1&destination=$$${lat},${lng}`;
-
-                            infoWindow.setContent(`
-                                <div style="padding: 12px; font-family: 'Poppins', sans-serif; min-width: 200px;">
-                                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee; padding-bottom:8px; margin-bottom:8px;">
-                                        <span style="font-weight:700; color:#2c3e50; font-size:1rem;"><i class="fas fa-bus"></i> ${doc.id}</span>
-                                        ${badgeHtml}
-                                    </div>
-                                    
-                                    <div style="font-size: 0.85rem; color: #666; margin-bottom: 12px;">
-                                        <i class="fas fa-map-marker-alt"></i> <b>Zone:</b> ${zName}<br>
-                                        <i class="fas fa-compass"></i> <b>Coords:</b> ${lat.toFixed(4)}, ${lng.toFixed(4)}
-                                    </div>
-
-                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                                        <a href="${navUrl}" target="_blank" style="text-decoration:none; background:#3498db; color:white; border-radius:6px; padding: 8px; font-size:0.75rem; text-align:center; font-weight:600;">
-                                            <i class="fas fa-location-arrow"></i> Navigate
-                                        </a>
-
-                                        <form action="process_shuttle_status.php" method="POST" style="margin:0;">
-                                            <input type="hidden" name="shuttle_id" value="${doc.id}">
-                                            <input type="hidden" name="action" value="${statusStr === 'maintenance' ? 'active' : 'maintenance'}">
-                                            <button type="submit" ${statusStr === 'inactive' ? 'disabled' : ''} style="width:100%; height:100%; background:${statusStr === 'maintenance' ? '#2ecc71' : (statusStr === 'inactive' ? '#ccc' : '#f39c12')}; color:white; border:none; border-radius:6px; padding: 8px; cursor:${statusStr === 'inactive' ? 'not-allowed' : 'pointer'}; font-size:0.75rem; font-family:inherit; font-weight:600;">
-                                                <i class="fas ${statusStr === 'maintenance' ? 'fa-check' : 'fa-tools'}"></i> ${statusStr === 'maintenance' ? 'Restore' : 'Maint.'}
-                                            </button>
-                                        </form>
-                                    </div>
-                                </div>
-                            `);
+                            activeInfoWindowShuttleId = doc.id; // Mark this popup as active
+                            infoWindow.setContent(fleetMarkers[doc.id].latestHtml); // Pull the fresh HTML
                             infoWindow.open(map, marker);
                         });
+                        
+                        // Clear active status when popup is closed
+                        infoWindow.addListener('closeclick', () => {
+                            activeInfoWindowShuttleId = null;
+                        });
+
                         fleetMarkers[doc.id] = marker;
 
                         if (Object.keys(fleetMarkers).length === 1) {
                             map.setCenter(pos);
                         }
                     } else {
+                        // Update existing marker's physical position and opacity
                         fleetMarkers[doc.id].position = pos;
-                        fleetMarkers[doc.id].content.style.backgroundColor = fillColor;
                         fleetMarkers[doc.id].content.style.opacity = opacity;
+                    }
+
+                    // CRITICAL FIX: Always generate fresh HTML to fix the "stuck data" bug!
+                    const navUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+                    
+                    fleetMarkers[doc.id].latestHtml = `
+                        <div style="padding: 12px; font-family: 'Poppins', sans-serif; min-width: 200px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee; padding-bottom:8px; margin-bottom:8px;">
+                                <span style="font-weight:700; color:#2c3e50; font-size:1rem;"><i class="fas fa-bus"></i> ${doc.id}</span>
+                                ${badgeHtml}
+                            </div>
+                            <div style="font-size: 0.85rem; color: #666; margin-bottom: 12px;">
+                                <i class="fas fa-map-marker-alt"></i> <b>Zone:</b> ${zName}<br>
+                                <i class="fas fa-compass"></i> <b>Coords:</b> ${lat.toFixed(4)}, ${lng.toFixed(4)}
+                            </div>
+                            <a href="${navUrl}" target="_blank" style="display:block; text-decoration:none; background:#3498db; color:white; border-radius:6px; padding: 8px; font-size:0.75rem; text-align:center; font-weight:600;">
+                                <i class="fas fa-location-arrow"></i> Navigate
+                            </a>
+                        </div>
+                    `;
+
+                    // If the admin currently has THIS shuttle's popup open, update the text live!
+                    if (activeInfoWindowShuttleId === doc.id) {
+                        infoWindow.setContent(fleetMarkers[doc.id].latestHtml);
                     }
                 }
             });
@@ -856,6 +870,85 @@ include $depth . 'layout/admin/header.php';
             }
         });
     }
+
+    // Map Focus Function
+    function focusMapShuttle(id) {
+        if (!id || !fleetMarkers[id]) return;
+        const marker = fleetMarkers[id];
+        map.setCenter(marker.position);
+        map.setZoom(18);
+        
+        // Auto-click to open info window
+        if (marker.content) {
+            marker.content.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        }
+    }
+
+    // State Preservation & Silent Sync Logic
+    let isInteracting = false;
+    
+    document.addEventListener("DOMContentLoaded", () => {
+        // 1. Restore search state on refresh
+        const savedSearch = sessionStorage.getItem('sm_search');
+        if (savedSearch !== null && savedSearch !== '') {
+            const searchInput = document.getElementById('searchShuttles');
+            if(searchInput) {
+                searchInput.value = savedSearch;
+                handleSearch('tableShuttles');
+            }
+        }
+        
+        // 2. Track interactions to pause sync
+        const interactionSelectors = 'input, select, button, form, .interaction-target, .modal-overlay, .modal-content';
+        document.querySelectorAll(interactionSelectors).forEach(el => {
+            el.addEventListener('focus', () => isInteracting = true);
+            el.addEventListener('blur', () => isInteracting = false);
+            el.addEventListener('mouseover', () => isInteracting = true);
+            el.addEventListener('mouseout', () => isInteracting = false);
+            el.addEventListener('change', () => isInteracting = true);
+        });
+    });
+
+    window.addEventListener('beforeunload', () => {
+        if(document.getElementById('searchShuttles')) {
+            sessionStorage.setItem('sm_search', document.getElementById('searchShuttles').value);
+        }
+    });
+
+    // 3. Silent Table Sync
+    setInterval(() => {
+        const anyModalOpen = document.getElementById('shuttleModalOverlay') && document.getElementById('shuttleModalOverlay').style.display === 'flex';
+        
+        if (!isInteracting && !anyModalOpen) {
+            fetch(window.location.href)
+                .then(res => {
+                    if (!res.ok) throw new Error("HTTP " + res.status);
+                    return res.text();
+                })
+                .then(html => {
+                    const doc = new DOMParser().parseFromString(html, 'text/html');
+                    const newTable = doc.getElementById('tableShuttles');
+                    
+                    if (newTable) {
+                        document.querySelector('#tableShuttles tbody').innerHTML = newTable.querySelector('tbody').innerHTML;
+                        
+                        // Re-apply local filter/search
+                        handleSearch('tableShuttles'); 
+
+                        // Re-attach interaction safeguards to new rows
+                        document.querySelectorAll('input, select, button, form, .interaction-target, .modal-overlay, .modal-content').forEach(el => {
+                            el.addEventListener('focus', () => isInteracting = true);
+                            el.addEventListener('blur', () => isInteracting = false);
+                            el.addEventListener('mouseover', () => isInteracting = true);
+                            el.addEventListener('mouseout', () => isInteracting = false);
+                            el.addEventListener('change', () => isInteracting = true);
+                        });
+                    }
+                })
+                .catch(err => console.warn("Silent sync paused:", err.message));
+        }
+    }, 1500);
+
 </script>
 <script async defer
     src="https://maps.googleapis.com/maps/api/js?key=<?= MAPS_API_KEY ?>&libraries=marker&callback=initMap&loading=async"></script>
