@@ -308,7 +308,7 @@ include $depth . 'layout/admin/header.php';
     <form method="POST">
         <div style="margin-bottom:15px;">
             <label style="font-weight:600;">Route Name</label>
-            <input type="text" name="route_name" class="form-control" placeholder="e.g. Red Line Loop" required>
+            <input type="text" name="route_name" class="form-control" placeholder="e.g. Route A" required>
         </div>
 
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
