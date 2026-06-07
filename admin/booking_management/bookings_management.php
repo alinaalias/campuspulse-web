@@ -113,7 +113,7 @@ foreach ($activeOndemandBookings as $doc) {
         
        if ($status === 'pending' || $status === 'searching') {
             $reqTime = strtotime($data['request_time'] ?? 'now');
-            if (($now - $reqTime) > 40) {
+            if (($now - $reqTime) > 150) {
                 $data['is_overdue'] = true;
             }
         } elseif ($status === 'admin_review') {

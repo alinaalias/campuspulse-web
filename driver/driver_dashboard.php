@@ -994,7 +994,7 @@ $extraScripts = '<script>
                                 audio.play().catch(e => { });
                             }
 
-                            let timeLeft = 20;
+                            let timeLeft = 30;
                             const timerElement = document.getElementById(`ping-timer-${bookingId}`);
                             pingTimerInterval = setInterval(() => {
                                 timeLeft--;
