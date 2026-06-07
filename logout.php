@@ -5,7 +5,7 @@ require_once 'config.php';
 $hasActiveTrip = false;
 $shuttleId = null;
 
-// 1. GATEKEEPER: Fetch Driver State Before Logout
+//Fetch Driver State Before Logout
 if (isset($_SESSION['user_id']) && ($_SESSION['role'] ?? '') === 'driver') {
     try {
         $driverSnap = $firestore->collection('Staffs')->document($_SESSION['user_id'])->snapshot();
@@ -13,7 +13,6 @@ if (isset($_SESSION['user_id']) && ($_SESSION['role'] ?? '') === 'driver') {
             $driverData = $driverSnap->data();
             $shuttleId = $driverData['assigned_shuttle_id'] ?? null;
 
-            // Check if they are currently on a trip
             if (!empty($driverData['current_trip_id'])) {
                 $hasActiveTrip = true;
             }
@@ -22,24 +21,21 @@ if (isset($_SESSION['user_id']) && ($_SESSION['role'] ?? '') === 'driver') {
     }
 }
 
-// 2. PROCESS LOGOUT (Only if confirmed AND no active trips)
+// PROCESS LOGOUT 
 if (isset($_GET['confirm']) && $_GET['confirm'] === '1' && !$hasActiveTrip) {
     if (isset($_SESSION['user_id'])) {
         try {
-            // Update Driver to Offline
             $firestore->collection('Staffs')->document($_SESSION['user_id'])->update([
                 ['path' => 'duty_status', 'value' => 'offline'],
                 ['path' => 'current_trip_id', 'value' => null]
             ]);
 
-            // LOOPHOLE FIX: Force the Assigned Shuttle to Offline
             if (!empty($shuttleId)) {
                 $firestore->collection('Shuttles')->document($shuttleId)->update([
                     ['path' => 'is_online', 'value' => false]
                 ]);
             }
         } catch (Exception $e) {
-            // Failsafe catch
         }
     }
 
@@ -153,7 +149,6 @@ ob_start();
 
     .btn-return {
         background: #0A3060;
-        /* CampusPulse Primary Blue */
         color: white;
     }
 
@@ -172,18 +167,18 @@ include $depth . 'layout/public/header.php';
     <?php if ($hasActiveTrip): ?>
         <i class="fas fa-exclamation-triangle logout-icon icon-warning"></i>
         <h2>Active Trip Detected</h2>
-        <p>You cannot sign out while you are servicing an active trip. Please complete or cancel the trip first to ensure
+        <p>You cannot log out while you are servicing an active trip. Please complete or cancel the trip first to ensure
             student safety.</p>
         <div class="btn-group">
             <button onclick="window.history.back()" class="btn btn-return">Return to Dashboard</button>
         </div>
     <?php else: ?>
         <i class="fas fa-sign-out-alt logout-icon icon-danger"></i>
-        <h2>Sign Out?</h2>
+        <h2>Log Out?</h2>
         <p>Are you sure you want to securely end your current session?</p>
         <div class="btn-group">
             <button onclick="window.history.back()" class="btn btn-cancel">Cancel</button>
-            <a href="?confirm=1" class="btn btn-confirm">Yes, Sign Out</a>
+            <a href="?confirm=1" class="btn btn-confirm">Yes, Log Out</a>
         </div>
     <?php endif; ?>
 </div>
