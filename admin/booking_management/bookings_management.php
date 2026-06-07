@@ -113,7 +113,7 @@ foreach ($activeOndemandBookings as $doc) {
         
        if ($status === 'pending' || $status === 'searching') {
             $reqTime = strtotime($data['request_time'] ?? 'now');
-            if (($now - $reqTime) > 150) {
+            if (($now - $reqTime) > 40) {
                 $data['is_overdue'] = true;
             }
         } elseif ($status === 'admin_review') {
@@ -852,7 +852,7 @@ include $depth . 'layout/admin/header.php';
                         <div class="dc-time-wrap">
                             <span class="dc-time"><?= date('h:i A', strtotime($req['request_time'] ?? 'now')) ?></span>
                             <?php if (!empty($req['is_overdue'])): ?>
-                                <div class="sla-warning interaction-target"><span class="dot"></span> SLA Warning</div>
+                                <div class="sla-warning interaction-target"><span class="dot"></span> Warning</div>
                             <?php endif; ?>
                         </div>
                     </div>
