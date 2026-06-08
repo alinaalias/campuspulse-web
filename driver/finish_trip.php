@@ -10,7 +10,6 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'driver') {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $rawId = $_POST['schedule_id'] ?? '';
-    // Capture reason from early termination (if applies)
     $terminationReason = trim($_POST['termination_reason'] ?? '');
 
     if (empty($rawId)) {
@@ -22,7 +21,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $driverId = $_SESSION['user_id'];
     $passengerCount = 0;
 
-    // Fetch the Driver's assigned shuttle directly as the ultimate source of truth
     $staffSnap = $db->collection('Staffs')->document($driverId)->snapshot();
     $driverData = $staffSnap->exists() ? $staffSnap->data() : [];
     $driverShuttleId = $driverData['assigned_shuttle_id'] ?? null;
@@ -31,7 +29,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // --- SCHEDULE FINISH LOGIC ---
         $scheduleId = substr($rawId, 6);
 
-        // THE FIX 3: STRICT BLOCK - Prevent finishing if passengers are still onboard
         $onboardBookings = $db->collection('Bookings')
             ->where('schedule_id', '=', $scheduleId)
             ->where('status', '=', 'onboard')
@@ -87,14 +84,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ['path' => 'updated_at', 'value' => date('Y-m-d H:i:s')]
             ]);
 
-            // Check if we need to set the shuttle to IDLE
             $activeCheck = $db->collection('Bookings')
                 ->where('driver_id', '=', $driverId)
                 ->where('status', 'in', ['confirmed', 'arriving', 'arrived', 'onboard'])
                 ->documents();
 
-            // THE FIX 1: Use Firestore's native isEmpty() instead of PHP's native empty()
-            if ($activeCheck->isEmpty()) {
+            $hasActiveJobs = false;
+            foreach ($activeCheck as $job) {
+                if ($job->exists()) {
+                    $hasActiveJobs = true;
+                    break;
+                }
+            }
+
+            if (!$hasActiveJobs) {
                 if (!empty($driverShuttleId)) {
                     $db->collection('Shuttles')->document($driverShuttleId)->update([
                         ['path' => 'job_status', 'value' => 'idle']
