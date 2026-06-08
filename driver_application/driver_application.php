@@ -468,6 +468,14 @@ include $depth . 'layout/public/header.php';
 
         <div class="driver-card">
             <h3><i class="fas fa-check-square"></i> Declarations</h3>
+            
+            <div class="checkbox-group" style="background-color: #e8f4fd; border-color: #bbdefb;">
+                <input type="checkbox" id="decl_pdpa" name="decl_pdpa" required>
+                <label for="decl_pdpa" style="color: #003366;">
+                    <b>Data Privacy Consent:</b> I agree to the Terms & Policies and consent to the collection, processing, and storage of my personal data (including my Identity Card and Driving Licenses) strictly for background verification and onboarding purposes, in compliance with the Personal Data Protection Act (PDPA).
+                </label>
+            </div>
+
             <div class="checkbox-group">
                 <input type="checkbox" id="decl_clean_record" name="decl_clean_record" required>
                 <label for="decl_clean_record">I declare that I have a clean driving record with no major traffic
