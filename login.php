@@ -124,7 +124,7 @@ include $depth . 'layout/public/header.php';
     <form method="POST" action="login.php">
         <div class="form-group">
             <label for="email">Email Address</label>
-            <input type="email" name="email" id="email" class="form-control" placeholder="staff@campuspulse.my"
+            <input type="email" name="email" id="email" class="form-control" placeholder="staff@email.com"
                 required>
         </div>
 
