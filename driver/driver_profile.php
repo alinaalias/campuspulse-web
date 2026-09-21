@@ -535,24 +535,35 @@ $extraScripts .= '
             const db = firebase.firestore();
             const driverId = "' . $driverId . '";
             const sessionStartTime = Date.now();
-            let initialStaffLoad = true;
+            let lastVersion = null;
 
-            db.collection("Staffs").doc(driverId).onSnapshot((doc) => {
-                if (!doc.exists) return;
-                if (initialStaffLoad) { initialStaffLoad = false; return; }
+            // Staffs is private under the Firestore rules, so the account status is
+            // checked through the server instead of a direct listener.
+            async function checkAccountStatus() {
+                if (document.hidden) return;
+                try {
+                    const res = await fetch("profile_status.php", { cache: "no-store" });
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    if (!data.success) return;
+                    if (lastVersion === null) { lastVersion = data.version; return; }
+                    if (data.version === lastVersion) return;
+                    lastVersion = data.version;
 
-                const data = doc.data();
-                if (data.status === "active") {
-                    const banner = document.getElementById("accountLockedBanner");
-                    if (banner) banner.style.display = "none";
-                    const btn = document.getElementById("submitBtn");
-                    if (btn) { btn.innerHTML = \'<i class="fas fa-save"></i> Submit Updates\'; btn.style.background = "var(--primary-blue)"; }
+                    if (data.status === "active") {
+                        const banner = document.getElementById("accountLockedBanner");
+                        if (banner) banner.style.display = "none";
+                        const btn = document.getElementById("submitBtn");
+                        if (btn) { btn.innerHTML = \'<i class="fas fa-save"></i> Submit Updates\'; btn.style.background = "var(--primary-blue)"; }
 
-                    setTimeout(() => { window.location.href = "driver_dashboard.php"; }, 2000);
-                } else if (data.status === "suspended" || data.status === "inactive") {
-                    location.reload();
-                }
-            });
+                        setTimeout(() => { window.location.href = "driver_dashboard.php"; }, 2000);
+                    } else if (data.status === "suspended" || data.status === "inactive") {
+                        location.reload();
+                    }
+                } catch (e) { }
+            }
+            checkAccountStatus();
+            setInterval(checkAccountStatus, ' . (($isForcedSetup || $requiresComplianceUpdate || $isPendingReview || $isSuspended) ? 10000 : 30000) . ');
 
             db.collection("Notifications").where("user_id", "==", driverId)
                 .onSnapshot((snapshot) => {
